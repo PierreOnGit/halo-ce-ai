@@ -2,6 +2,10 @@
 
 Hold a key and speak to the marine you're looking at in *Halo: Combat Evolved*. They answer out loud, in character, with subtitles, and can do what you ask: follow you, hold position, charge, get in the Warthog, hand you their weapon. A Grunt might even defect. If nobody is nearby, Cortana answers from inside your helmet.
 
+**Play it with a friend.** In network co-op, both of you can talk to the characters. Only the host needs the AI models; your friend just needs the game. The characters also **speak up on their own**: a squadmate killed beside them, Covenant contact, the fight over, your shields down, someone taking the Warthog, a long quiet.
+
+**What to download, which models fit your GPU, and the settings:** see [`docs/SETUP.md`](docs/SETUP.md). The plan behind it is in [`docs/PLAN.md`](docs/PLAN.md).
+
 This rebuilds the setup from chasm's video [*Giving Video Game NPC's Consciousness*](https://youtu.be/EOfm3h4xYU8). It joins two open-source projects:
 
 - **[OpenCE](https://github.com/OpenCommunityEdition/OpenCE)** is the Halo CE decompilation ported to Windows, Linux, Android and the web. It is the "halo decomp" linked in the video. This repository adds a bridge to it.
@@ -22,9 +26,10 @@ This rebuilds the setup from chasm's video [*Giving Video Game NPC's Consciousne
 
 | Path | What it is |
 | --- | --- |
+| `opence/port/linux/src/chasm_opus.[ch]` | Opus for co-op: a client's words to the host, and the characters' voices back to the clients. |
 | `opence/port/linux/src/chasm_client.[ch]` | The platform half. It talks HTTP to chasm on its own thread, records push to talk from voice chat's microphone, decodes the voice WAVs and mixes them into the game's sound. It also writes the files chasm uses to find the game: the heartbeat, the profile and the bridge settings. |
 | `opence/port/linux/game/chasm_bridge.[ch]` | The game half. It works out who you're talking to, builds the request (who is near, the mission, your health and weapon, the difficulty, whether there's a fight), draws the subtitles, moves the speaker's mouth, positions the voice, gives the chosen order to the speaker's squad, and saves and restores chasm's memories with checkpoints. |
-| `opence/patches/opence-chasm-bridge.patch` | Small hooks in OpenCE's own files: the main loop, the HUD, checkpoints, the sound mix and the new `chasm.*` settings. |
+| `opence/patches/opence-chasm-bridge.patch` | Small hooks in OpenCE's own files: the main loop, the HUD, checkpoints, the sound mix, three co-op network messages (network version 33), the `controls.talk_to_ai` key and the new settings. |
 | `opence/OPENCE_COMMIT` | The OpenCE commit the patch is made against. |
 | `chasm-profile/halo-combat-evolved/` | The chasm profile: 15 character cards (Cortana, 343 Guilty Spark, Sergeant Johnson, Captain Keyes, Bisenti, Mendoza, Jenkins, Fitzgerald, Chips Dubbo, Marine, Crewman, Grunt, Elite, Jackal, Hunter), a lorebook and the action book. |
 | `tools/build_profile.py` | Generates `chasm-profile/` from the data in the script. Edit it there, bump `BUNDLE_VERSION`, and run it again. |
@@ -64,7 +69,7 @@ Leave chasm running while you play. When the game starts, chasm shows **Connecte
 
 ### 3. Play
 
-Start a campaign mission. Look at a marine, **hold V** (`controls.push_to_talk`, the voice chat key), say something and let go.
+Start a campaign mission. Look at a marine, **hold B** (`controls.talk_to_ai`; alone, V works too), say something and let go.
 
 - **"Johnson, follow me."** A name you say picks who answers, among the characters near you. Otherwise the one under your crosshair answers, otherwise the nearest friendly. Cortana answers when nobody is near, or when you say her name.
 - The speaker turns to face you. Their voice comes from where they stand and their mouth moves with it. Subtitles appear above the motion tracker: your words in blue, theirs in white.
@@ -86,18 +91,42 @@ Start a campaign mission. Look at a marine, **hold V** (`controls.push_to_talk`,
 - Speaking again interrupts whoever is talking. When a character dies, their voice stops.
 - Checkpoints are sent to chasm (save-sync). When you die and go back to a checkpoint, the characters forget what happened after it.
 
+### Co-op
+
+Host a campaign co-op game (LAN or internet). Whoever holds **B** (`controls.talk_to_ai`) talks to the characters; V stays voice chat between players.
+
+- Only the host runs chasm. A friend's words travel to the host as Opus frames over the game's own connection; the host recognizes them, picks the character near *that* player, runs the turn and gives the order.
+- The voice comes back to every client as Opus, with the subtitle and where the speaker stands, so each player hears it from their own position.
+- Bridge builds use network version 33, so they play only with each other.
+
+### The characters' own initiative
+
+The host watches the game twice a second. When something happens that a squadmate would remark on, the nearest friendly witness (or Cortana, for your shields) gets a chasm *reaction turn*: no player words, just a narration of the event. Then they speak. This happens at most once every `chasm.reaction_cooldown` seconds, and never over a conversation:
+
+- a friendly character killed nearby
+- Covenant contact after a quiet spell
+- the fight being over
+- a player's shields collapsing under fire
+- a player boarding a vehicle
+- `chasm.idle_chatter` seconds of quiet
+
 ### Settings (`config.toml`, next to the executable)
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| `chasm.enabled` | `true` | Turns the bridge on in the campaign. It never runs in network games, where push to talk is voice chat's. |
+| `controls.talk_to_ai` | `"B"` | Hold it to talk to the AI, alone or in co-op. When playing alone, `controls.push_to_talk` (V) works too. |
+| `chasm.enabled` | `true` | Turns the bridge on in the campaign, alone or in network co-op. |
+| `chasm.reactions` | `true` | Characters speak up on their own (see above). |
+| `chasm.reaction_cooldown` | `20.0` | The fewest seconds between two of their own remarks. |
+| `chasm.idle_chatter` | `150.0` | Seconds of quiet before the nearest friend may say something. `0` is never. |
 | `chasm.url` | `"http://127.0.0.1:7341"` | Where chasm is (`http://` only). It can be on another machine. |
 | `chasm.distance` | `12.0` | How near, in meters, a character must be for you to talk to them. |
 | `chasm.microphone_warm` | `true` | Keeps the microphone open during the campaign so the first word isn't cut off. Audio is only recorded while the key is held. |
 | `chasm.bridge_folder` | `""` | The folder chasm finds the game by. Empty means chasm's own: `CHASM_BRIDGE_ROOT`, else `%LOCALAPPDATA%\chasm\bridge` (`/tmp/chasm/bridge` on Linux). |
-| `debug.chasm_say` | `""` | For tests: these words are said, as if heard, two seconds into each map. |
+| `debug.chasm_say` | `""` | For tests: these words are said, as if heard, two seconds into each map. On a co-op client, push to talk is held for 1.5 s instead. |
+| `debug.chasm_react` | `""` | For tests: this narration is given to the nearest friend (else Cortana) as a reaction, four seconds into each map. |
 
-Each setting has a `HALO_*` environment variable, as OpenCE's settings do: `HALO_CHASM`, `HALO_CHASM_URL`, `HALO_CHASM_DISTANCE`, `HALO_CHASM_MICROPHONE_WARM`, `HALO_CHASM_BRIDGE_FOLDER`, `HALO_CHASM_SAY`.
+Each setting has a `HALO_*` environment variable, as OpenCE's settings do: `HALO_CHASM`, `HALO_CHASM_URL`, `HALO_CHASM_DISTANCE`, `HALO_CHASM_MICROPHONE_WARM`, `HALO_CHASM_BRIDGE_FOLDER`, `HALO_CHASM_REACTIONS`, `HALO_CHASM_REACTION_COOLDOWN`, `HALO_CHASM_IDLE_CHATTER`, `HALO_KEY_TALK_TO_AI`, `HALO_CHASM_SAY`, `HALO_CHASM_REACT`.
 
 ### Voices
 
@@ -123,20 +152,26 @@ The game logs everything the bridge does, with a `chasm:` prefix (stderr, or `ha
 ```sh
 tests/client_harness/build.sh /tmp/harness                  # chasm_client.c outside the game (32-bit, SDL3)
 python tests/run_e2e.py --chasm <chasm>/target/debug/chasm --harness /tmp/harness \
-    [--opence OpenCE]                                         # also the game itself, on a StageKit map
+    [--opence OpenCE [--maps <your extracted maps/>]]
 ```
 
-It checks the following:
+**The client harness** checks the following:
 
-- chasm imports and activates the staged profile when it first sees the heartbeat.
-- A push-to-talk recording goes through recognition and comes back as text.
-- Six spoken orders each come back as a turn with subtitles, voice audio and the expected action: `movement.follow_target`, `ai.wait_here`, `halo.enter_vehicle`, `halo.berserk`, `world.give_item` and `combat.stop`.
+- chasm imports and activates the staged profile.
+- A push-to-talk recording comes back as text.
+- Six spoken orders each come back with subtitles, voice and the expected action: `movement.follow_target`, `ai.wait_here`, `halo.enter_vehicle`, `halo.berserk`, `world.give_item` and `combat.stop`.
+- **Co-op:**
+  - a client's recording, encoded as the client sends it, is recognized by the host;
+  - the host keeps the character's voice as relays;
+  - a client plays those relays with their subtitles.
+- **A reaction turn** (no player words, a narration) is answered.
 - The LLM's prompt contains the character's card and the Halo lore.
-- With `--opence`, the patched game itself plays a map from OpenCE's StageKit (no game data), says `debug.chasm_say`, and shows Cortana's reply as a subtitle once her voice starts in the game's sound mix.
 
-The GitHub Actions workflow runs all of this, plus OpenCE's StageKit suite on the patched game.
+**With `--opence`**, the patched game plays a map from OpenCE's StageKit (no game data). It says `debug.chasm_say` and narrates `debug.chasm_react`, and both answers must show as subtitles once the voice starts in the game's sound mix.
 
-**Not covered by tests:** finding the speaker among real AI units, and the squad orders (`chasm_act`). Both need the campaign's maps, and StageKit stages no AI. They use the same `ai_scripting_*` functions the levels' scripts use, and the logs above show what they do.
+**With `--maps` too** (your own extracted Xbox maps), it plays a30 among its marines, then a **real two-instance co-op game** on a30: the joiner talks to the AI, and must get its words and the answer back from the host. That last test needs the retail maps (hosting needs the menus' `ui.map`), so CI can't run it. Run it on your machine.
+
+CI runs everything that needs no game data on every push, plus OpenCE's StageKit suite on the patched game, and builds Linux and Windows.
 
 ## Licenses
 

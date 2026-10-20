@@ -43,10 +43,41 @@ struct chasm_event
 	char text[1024];
 };
 
-/* every frame, on the game's thread: the microphone read while listening,
-the heartbeat written, the profile and bridge settings put where chasm
-finds them (once); enabled 0 stops it all */
-void chasm_client_update(int enabled);
+/* what this machine is to chasm (chasm_client_update) */
+enum
+{
+	_chasm_mode_off,
+	/* it talks to chasm: single player, or a co-op game's host */
+	_chasm_mode_host,
+	/* a co-op game's client: its words go to the host, and the characters'
+	voices come from it (chasm_client_take_packets, chasm_client_play_relay) */
+	_chasm_mode_client,
+};
+
+/* the most frames in a relay: half a second */
+#define CHASM_RELAY_FRAMES 25
+/* ... and their bytes at most, and a relay's caption's (a reliable message
+of the game's holds them) */
+#define CHASM_RELAY_BYTES 2600
+#define CHASM_RELAY_CAPTION_SIZE 900
+
+/* a stretch of a character's voice, Opus, as the host sends it on to co-op
+clients: the first of a line's carries its caption */
+struct chasm_relay
+{
+	int turn;
+	int first;
+	char npc_key[64];
+	char caption[CHASM_RELAY_CAPTION_SIZE];
+	int count;
+	unsigned char lengths[CHASM_RELAY_FRAMES];
+	unsigned char bytes[CHASM_RELAY_BYTES];
+};
+
+/* every frame, on the game's thread: the microphone read while listening;
+as the host, the heartbeat written and the profile and bridge settings put
+where chasm finds them (once); off stops it all */
+void chasm_client_update(int mode);
 /* whether chasm's address (chasm.url) is usable on this platform */
 int chasm_client_available(void);
 
@@ -55,12 +86,18 @@ the microphone is open */
 int chasm_client_listen(int listen);
 /* how much was recorded since listening started, in milliseconds */
 int chasm_client_recorded_ms(void);
+/* (a co-op client) the recording's frames since the last call, Opus, up to
+maximum frames and size bytes (lengths and the packets one after another);
+how many */
+int chasm_client_take_packets(unsigned char *lengths, unsigned char *bytes, int maximum, int size);
 
 /* the recording given to chasm's speech recognition: what was heard comes
 back as a _chasm_event_heard (or an error). A turn running is abandoned
 (its voice stopped). Returns the new turn's number, or 0 if none could start
 (nothing recorded) */
 int chasm_client_recognize(void);
+/* ... another machine's recording (a co-op client's), its Opus frames */
+int chasm_client_recognize_packets(const unsigned char *lengths, const unsigned char *bytes, int count);
 /* a turn of a character's: members are the request's JSON members, without
 the braces ("\"npc_key\":\"Bisenti\",..."); a turn running is abandoned
 (its voice stopped). Returns the new turn's number, or 0 if none could
@@ -80,6 +117,13 @@ int chasm_client_next_event(struct chasm_event *event);
 mouth), and where it is heard from (gain 0 to 2, pan -1 left to 1 right) */
 float chasm_client_voice_level(void);
 void chasm_client_voice_place(float gain, float pan);
+/* (the host) whether the characters' voices are also kept, as relays, for
+co-op clients; the next one kept, 1 if there was one */
+void chasm_client_set_relaying(int relaying);
+int chasm_client_next_relay(struct chasm_relay *relay);
+/* (a co-op client) a relay the host sent, played (a newer turn's stops the
+older's) */
+void chasm_client_play_relay(const struct chasm_relay *relay);
 /* (dsound_sdl.c, on the audio thread) the voices added to the output
 (stereo, 48 kHz) */
 void chasm_client_mix(float *output, unsigned long frames);

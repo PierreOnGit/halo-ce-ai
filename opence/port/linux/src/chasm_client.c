@@ -31,6 +31,12 @@ there from chasm-profile/ in the data folder for chasm to import; and the
 bridge's settings (nvbridge.config.json), written if there are none, which
 point chasm's actions at this game's action book.
 
+In a co-op game only the host talks to chasm. A client's words are recorded
+as Opus frames (chasm_opus.c) that port/linux/game/chasm_bridge.c sends to
+the host, which recognizes them as its own (chasm_client_recognize_packets);
+and the host keeps each voice it plays as Opus relays too, which the bridge
+sends to the clients, which play them as they come (chasm_client_play_relay).
+
 Android and the web have no chasm to talk to: everything here does nothing
 there.
 */
@@ -41,6 +47,7 @@ there.
 #include "sdl_platform.h"
 #include "voice_audio.h"
 #include "chasm_client.h"
+#include "chasm_opus.h"
 
 #include <SDL3/SDL.h>
 #include <math.h>
@@ -95,11 +102,18 @@ int chasm_json_escape(const char *text, char *buffer, int size)
 
 #if defined(HALO_WEB) || defined(HALO_ANDROID)
 
-void chasm_client_update(int enabled) { (void)enabled; }
+void chasm_client_update(int mode) { (void)mode; }
 int chasm_client_available(void) { return 0; }
 int chasm_client_listen(int listen) { (void)listen; return 0; }
 int chasm_client_recorded_ms(void) { return 0; }
 int chasm_client_recognize(void) { return 0; }
+int chasm_client_recognize_packets(const unsigned char *lengths, const unsigned char *bytes, int count)
+{ (void)lengths; (void)bytes; (void)count; return 0; }
+int chasm_client_take_packets(unsigned char *lengths, unsigned char *bytes, int maximum, int size)
+{ (void)lengths; (void)bytes; (void)maximum; (void)size; return 0; }
+void chasm_client_set_relaying(int relaying) { (void)relaying; }
+int chasm_client_next_relay(struct chasm_relay *relay) { (void)relay; return 0; }
+void chasm_client_play_relay(const struct chasm_relay *relay) { (void)relay; }
 int chasm_client_send_turn(const char *members) { (void)members; return 0; }
 void chasm_client_post(const char *path, const char *body) { (void)path; (void)body; }
 void chasm_client_cancel(void) {}
@@ -194,6 +208,36 @@ static char chasm_bridge_folder[1024];
 static BOOL chasm_bridge_staged;
 static Uint64 chasm_heartbeat_at;
 static BOOL chasm_enabled_before;
+static int chasm_mode;
+
+/* (the game's thread) a co-op client's recording, Opus, until taken */
+#define CHASM_PENDING_PACKETS 100
+static struct chasm_opus_encoder *chasm_record_encoder;
+static unsigned char chasm_pending_lengths[CHASM_PENDING_PACKETS];
+static unsigned char chasm_pending_bytes[CHASM_PENDING_PACKETS][CHASM_OPUS_MAXIMUM_PACKET];
+static int chasm_pending_count;
+
+/* (chasm_voice_lock) the host's voices kept for co-op clients, as Opus: each
+line's frames, taken a relay at a time (chasm_client_next_relay) */
+struct chasm_relay_source
+{
+	int turn;
+	char npc_key[64];
+	char caption[CHASM_RELAY_CAPTION_SIZE];
+	int count, taken;
+	unsigned char *lengths;
+	unsigned char *bytes;
+	int offset;
+	struct chasm_relay_source *next;
+};
+static BOOL chasm_relaying;
+static struct chasm_relay_source *chasm_relays;
+/* (the thread's) the relays' encoder */
+static struct chasm_opus_encoder *chasm_relay_encoder;
+/* (the game's thread, a client) the relays' decoder, and the newest turn
+played */
+static struct chasm_opus_decoder *chasm_relay_decoder;
+static int chasm_relay_turn;
 
 static Uint64 chasm_now(void)
 {
@@ -713,10 +757,64 @@ int chasm_client_next_event(struct chasm_event *event)
 
 /* ---------- the voices */
 
+/* a line's voice as Opus frames, for co-op clients (on the thread: its
+encoder's); NULL if it could not be */
+static struct chasm_relay_source *chasm_relay_encode(int turn, const char *npc_key, const char *caption,
+	const float *samples, int count)
+{
+	struct chasm_relay_source *source = (struct chasm_relay_source *)calloc(1, sizeof(*source));
+	int frames = (count + CHASM_OPUS_FRAME_SAMPLES - 1) / CHASM_OPUS_FRAME_SAMPLES;
+	int frame, written = 0;
+
+	if (!chasm_relay_encoder)
+		chasm_relay_encoder = chasm_opus_encoder_new(32000);
+	if (!source || !chasm_relay_encoder || frames <= 0)
+	{
+		free(source);
+		return NULL;
+	}
+	source->lengths = (unsigned char *)malloc((size_t)frames);
+	source->bytes = (unsigned char *)malloc((size_t)frames * CHASM_OPUS_MAXIMUM_PACKET);
+	if (!source->lengths || !source->bytes)
+	{
+		free(source->lengths);
+		free(source->bytes);
+		free(source);
+		return NULL;
+	}
+	for (frame = 0; frame < frames; frame++)
+	{
+		float padded[CHASM_OPUS_FRAME_SAMPLES];
+		int first = frame * CHASM_OPUS_FRAME_SAMPLES;
+		int take = count - first < CHASM_OPUS_FRAME_SAMPLES ? count - first : CHASM_OPUS_FRAME_SAMPLES;
+		int length;
+
+		memset(padded, 0, sizeof(padded));
+		memcpy(padded, samples + first, (size_t)take * sizeof(float));
+		length = chasm_opus_encode(chasm_relay_encoder, padded, source->bytes + written, CHASM_OPUS_MAXIMUM_PACKET);
+		source->lengths[source->count++] = (unsigned char)length;
+		written += length;
+	}
+	source->turn = turn;
+	snprintf(source->npc_key, sizeof(source->npc_key), "%s", npc_key);
+	snprintf(source->caption, sizeof(source->caption), "%s", caption);
+	return source;
+}
+
+static void chasm_relay_free(struct chasm_relay_source *source)
+{
+	free(source->lengths);
+	free(source->bytes);
+	free(source);
+}
+
 static void chasm_voice_add(int turn, const char *npc_key, const char *caption, float *samples, int count)
 {
 	struct chasm_voice *voice = (struct chasm_voice *)calloc(1, sizeof(*voice));
+	struct chasm_relay_source *relay = NULL;
 	struct chasm_voice **last;
+	struct chasm_relay_source **last_relay;
+	BOOL relaying;
 
 	if (!voice)
 	{
@@ -729,17 +827,30 @@ static void chasm_voice_add(int turn, const char *npc_key, const char *caption, 
 	snprintf(voice->npc_key, sizeof(voice->npc_key), "%s", npc_key);
 	snprintf(voice->caption, sizeof(voice->caption), "%s", caption);
 	pthread_mutex_lock(&chasm_voice_lock);
+	relaying = chasm_relaying;
+	pthread_mutex_unlock(&chasm_voice_lock);
+	/* (encoded outside the lock, which the mixer waits on) */
+	if (relaying)
+		relay = chasm_relay_encode(turn, npc_key, caption, samples, count);
+	pthread_mutex_lock(&chasm_voice_lock);
 	for (last = &chasm_voices; *last; last = &(*last)->next)
 		;
 	*last = voice;
+	if (relay)
+	{
+		for (last_relay = &chasm_relays; *last_relay; last_relay = &(*last_relay)->next)
+			;
+		*last_relay = relay;
+	}
 	pthread_mutex_unlock(&chasm_voice_lock);
 }
 
 /* (chasm_voice_lock) the voices of abandoned turns, and those played and
-announced, freed */
+announced, freed; and the relays of abandoned turns */
 static void chasm_voices_prune_locked(int cancelled_turn)
 {
 	struct chasm_voice **link = &chasm_voices;
+	struct chasm_relay_source **relay_link = &chasm_relays;
 
 	while (*link)
 	{
@@ -754,6 +865,128 @@ static void chasm_voices_prune_locked(int cancelled_turn)
 		}
 		link = &voice->next;
 	}
+	while (*relay_link)
+	{
+		struct chasm_relay_source *relay = *relay_link;
+
+		if (relay->turn <= cancelled_turn)
+		{
+			*relay_link = relay->next;
+			chasm_relay_free(relay);
+			continue;
+		}
+		relay_link = &relay->next;
+	}
+}
+
+void chasm_client_set_relaying(int relaying)
+{
+	pthread_mutex_lock(&chasm_voice_lock);
+	chasm_relaying = relaying != 0;
+	/* (nobody to send them to: those kept dropped) */
+	while (!chasm_relaying && chasm_relays)
+	{
+		struct chasm_relay_source *relay = chasm_relays;
+
+		chasm_relays = relay->next;
+		chasm_relay_free(relay);
+	}
+	pthread_mutex_unlock(&chasm_voice_lock);
+}
+
+int chasm_client_next_relay(struct chasm_relay *relay)
+{
+	struct chasm_relay_source *source;
+	int bytes = 0;
+
+	pthread_mutex_lock(&chasm_voice_lock);
+	source = chasm_relays;
+	if (!source)
+	{
+		pthread_mutex_unlock(&chasm_voice_lock);
+		return 0;
+	}
+	relay->turn = source->turn;
+	relay->first = source->taken == 0;
+	snprintf(relay->npc_key, sizeof(relay->npc_key), "%s", source->npc_key);
+	snprintf(relay->caption, sizeof(relay->caption), "%s", relay->first ? source->caption : "");
+	relay->count = 0;
+	while (source->taken < source->count && relay->count < CHASM_RELAY_FRAMES &&
+		bytes + source->lengths[source->taken] <= CHASM_RELAY_BYTES)
+	{
+		int length = source->lengths[source->taken];
+
+		memcpy(relay->bytes + bytes, source->bytes + source->offset, (size_t)length);
+		relay->lengths[relay->count++] = (unsigned char)length;
+		bytes += length;
+		source->offset += length;
+		source->taken++;
+	}
+	if (source->taken >= source->count)
+	{
+		chasm_relays = source->next;
+		chasm_relay_free(source);
+	}
+	pthread_mutex_unlock(&chasm_voice_lock);
+	return 1;
+}
+
+void chasm_client_play_relay(const struct chasm_relay *relay)
+{
+	float *samples;
+	int index, offset = 0, count = 0;
+	struct chasm_voice *voice = NULL;
+
+	if (!chasm_relay_decoder)
+		chasm_relay_decoder = chasm_opus_decoder_new();
+	if (!chasm_relay_decoder || relay->count <= 0 || relay->turn < chasm_relay_turn)
+		return;
+	samples = (float *)malloc((size_t)relay->count * CHASM_OPUS_FRAME_SAMPLES * sizeof(float));
+	if (!samples)
+		return;
+	for (index = 0; index < relay->count; index++)
+	{
+		count += chasm_opus_decode(chasm_relay_decoder, relay->bytes + offset, relay->lengths[index], samples + count);
+		offset += relay->lengths[index];
+	}
+	pthread_mutex_lock(&chasm_voice_lock);
+	/* (a newer turn's: the older's stop) */
+	if (relay->turn > chasm_relay_turn)
+	{
+		chasm_voices_prune_locked(relay->turn - 1);
+		chasm_relay_turn = relay->turn;
+	}
+	/* (a line's later frames go on the end of its voice, which may be
+	playing) */
+	if (!relay->first)
+	{
+		struct chasm_voice *last;
+
+		for (last = chasm_voices; last; last = last->next)
+		{
+			if (last->turn == relay->turn)
+				voice = last;
+		}
+	}
+	if (voice)
+	{
+		float *grown = (float *)realloc(voice->samples, (size_t)(voice->count + count) * sizeof(float));
+
+		if (grown)
+		{
+			memcpy(grown + voice->count, samples, (size_t)count * sizeof(float));
+			voice->samples = grown;
+			voice->count += count;
+		}
+		pthread_mutex_unlock(&chasm_voice_lock);
+		free(samples);
+		return;
+	}
+	pthread_mutex_unlock(&chasm_voice_lock);
+	if (count > 0)
+		chasm_voice_add(relay->turn, relay->npc_key, relay->caption, samples, count);
+	else
+		free(samples);
 }
 
 float chasm_client_voice_level(void)
@@ -1415,16 +1648,17 @@ int chasm_client_available(void)
 	return chasm_parse_url(config_string("chasm.url"), host, sizeof(host), &port);
 }
 
-int chasm_client_recognize(void)
+/* 16 kHz samples given to chasm's speech recognition */
+static int chasm_recognize_samples(const short *samples, int count)
 {
 	unsigned char *wav;
 	char *audio, *body;
 	int size = 0;
 	size_t length;
 
-	if (!chasm_recording || chasm_recorded <= 0)
+	if (!samples || count <= 0)
 		return 0;
-	wav = wav_encode(chasm_recording, chasm_recorded, &size);
+	wav = wav_encode(samples, count, &size);
 	audio = wav ? base64_encode(wav, size) : NULL;
 	free(wav);
 	if (!audio)
@@ -1441,6 +1675,42 @@ int chasm_client_recognize(void)
 		"\"language\":\"en\"}", audio);
 	free(audio);
 	return chasm_queue(_chasm_job_recognize, "/api/headless/v1/speech/recognize", body);
+}
+
+int chasm_client_recognize(void)
+{
+	return chasm_recognize_samples(chasm_recording, chasm_recorded);
+}
+
+int chasm_client_recognize_packets(const unsigned char *lengths, const unsigned char *bytes, int count)
+{
+	struct chasm_opus_decoder *decoder = chasm_opus_decoder_new();
+	short *samples = (short *)malloc((size_t)(count > 0 ? count : 1) * CHASM_OPUS_FRAME_SAMPLES / 3 * sizeof(short));
+	int index, offset = 0, recorded = 0, turn = 0;
+
+	if (decoder && samples)
+	{
+		for (index = 0; index < count; index++)
+		{
+			float frame[CHASM_OPUS_FRAME_SAMPLES];
+			int decoded = chasm_opus_decode(decoder, bytes + offset, lengths[index], frame);
+			int sample;
+
+			offset += lengths[index];
+			/* (to 16 kHz, each three averaged, as the microphone's are) */
+			for (sample = 0; sample + 2 < decoded; sample += 3)
+			{
+				float value = (frame[sample] + frame[sample + 1] + frame[sample + 2]) / 3.0f;
+
+				value = value < -1.0f ? -1.0f : value > 1.0f ? 1.0f : value;
+				samples[recorded++] = (short)(value * 32767.0f);
+			}
+		}
+		turn = chasm_recognize_samples(samples, recorded);
+	}
+	free(samples);
+	chasm_opus_decoder_delete(decoder);
+	return turn;
 }
 
 int chasm_client_send_turn(const char *members)
@@ -1471,7 +1741,17 @@ void chasm_client_cancel(void)
 	chasm_cancelled_turn = chasm_next_turn - 1;
 	pthread_mutex_unlock(&chasm_lock);
 	pthread_mutex_lock(&chasm_voice_lock);
-	chasm_voices_prune_locked(chasm_next_turn - 1);
+	/* (a co-op client's are the host's turns: all of them, and the rest of
+	the one playing) */
+	if (chasm_mode == _chasm_mode_client)
+	{
+		chasm_voices_prune_locked(chasm_relay_turn);
+		chasm_relay_turn++;
+	}
+	else
+	{
+		chasm_voices_prune_locked(chasm_next_turn - 1);
+	}
 	pthread_mutex_unlock(&chasm_voice_lock);
 }
 
@@ -1495,6 +1775,7 @@ int chasm_client_listen(int listen)
 	if (listen && !chasm_listening)
 	{
 		chasm_recorded = 0;
+		chasm_pending_count = 0;
 		chasm_record_sum = 0.0f;
 		chasm_record_phase = 0;
 		if (!chasm_recording)
@@ -1507,6 +1788,26 @@ int chasm_client_listen(int listen)
 int chasm_client_recorded_ms(void)
 {
 	return chasm_recorded / (CHASM_RECORD_RATE / 1000);
+}
+
+int chasm_client_take_packets(unsigned char *lengths, unsigned char *bytes, int maximum, int size)
+{
+	int count = 0, written = 0, index;
+
+	while (count < chasm_pending_count && count < maximum && written + chasm_pending_lengths[count] <= size)
+	{
+		memcpy(bytes + written, chasm_pending_bytes[count], chasm_pending_lengths[count]);
+		lengths[count] = chasm_pending_lengths[count];
+		written += chasm_pending_lengths[count];
+		count++;
+	}
+	for (index = count; index < chasm_pending_count; index++)
+	{
+		chasm_pending_lengths[index - count] = chasm_pending_lengths[index];
+		memcpy(chasm_pending_bytes[index - count], chasm_pending_bytes[index], chasm_pending_lengths[index]);
+	}
+	chasm_pending_count -= count;
+	return count;
 }
 
 /* the microphone's frames: kept while listening, else dropped */
@@ -1525,6 +1826,19 @@ static void chasm_microphone_update(int enabled)
 
 		if (!chasm_listening)
 			continue;
+		/* (a co-op client's, for the host: Opus) */
+		if (chasm_mode == _chasm_mode_client && chasm_recorded < CHASM_MAXIMUM_RECORDING &&
+			chasm_pending_count < CHASM_PENDING_PACKETS)
+		{
+			int length;
+
+			if (!chasm_record_encoder)
+				chasm_record_encoder = chasm_opus_encoder_new(24000);
+			length = chasm_opus_encode(chasm_record_encoder, frame, chasm_pending_bytes[chasm_pending_count],
+				CHASM_OPUS_MAXIMUM_PACKET);
+			if (length > 0)
+				chasm_pending_lengths[chasm_pending_count++] = (unsigned char)length;
+		}
 		for (index = 0; index < VOICE_FRAME_SAMPLES; index++)
 		{
 			chasm_record_sum += frame[index];
@@ -1718,26 +2032,33 @@ static void chasm_write_heartbeat(void)
 	chasm_write_file(path, text);
 }
 
-void chasm_client_update(int enabled)
+void chasm_client_update(int mode)
 {
 	Uint64 now = chasm_now();
 
-	chasm_microphone_update(enabled);
-	if (!enabled)
+	/* (another mode: what the last one left stopped) */
+	if (mode != chasm_mode && chasm_enabled_before)
+		chasm_client_cancel();
+	chasm_mode = mode;
+	chasm_microphone_update(mode != _chasm_mode_off);
+	if (mode == _chasm_mode_off)
 	{
-		if (chasm_enabled_before)
-			chasm_client_cancel();
 		chasm_listening = FALSE;
 		chasm_enabled_before = FALSE;
+		chasm_client_set_relaying(FALSE);
 		return;
 	}
 	chasm_enabled_before = TRUE;
-	if (!chasm_bridge_staged)
-		chasm_stage_bridge();
-	if (now - chasm_heartbeat_at >= CHASM_HEARTBEAT_MS)
+	/* (the host alone is chasm's game) */
+	if (mode == _chasm_mode_host)
 	{
-		chasm_heartbeat_at = now;
-		chasm_write_heartbeat();
+		if (!chasm_bridge_staged)
+			chasm_stage_bridge();
+		if (now - chasm_heartbeat_at >= CHASM_HEARTBEAT_MS)
+		{
+			chasm_heartbeat_at = now;
+			chasm_write_heartbeat();
+		}
 	}
 	/* the lines whose voices started given as subtitles; those played
 	freed */

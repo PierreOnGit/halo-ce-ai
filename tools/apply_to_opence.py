@@ -6,10 +6,12 @@ Evolved decompilation's port to Linux, Windows, Android and the web. The
 bridge is:
 
   opence/port/linux/src/chasm_client.[ch]    new files, copied in
+  opence/port/linux/src/chasm_opus.[ch]      new files, copied in
   opence/port/linux/game/chasm_bridge.[ch]   new files, copied in
   opence/patches/opence-chasm-bridge.patch   the hooks in OpenCE's own files
                                              (main loop, HUD, checkpoints,
-                                             sound mix, settings)
+                                             sound mix, settings, the co-op
+                                             messages, the talk to AI key)
 
 made against the OpenCE commit in opence/OPENCE_COMMIT. Without --opence, a
 checkout of that commit is cloned into ./OpenCE; with it, the given checkout
@@ -34,6 +36,8 @@ PATCH = OVERLAY / "patches" / "opence-chasm-bridge.patch"
 NEW_FILES = [
     "port/linux/src/chasm_client.c",
     "port/linux/src/chasm_client.h",
+    "port/linux/src/chasm_opus.c",
+    "port/linux/src/chasm_opus.h",
     "port/linux/game/chasm_bridge.c",
     "port/linux/game/chasm_bridge.h",
 ]
@@ -41,7 +45,10 @@ UPSTREAM = "https://github.com/OpenCommunityEdition/OpenCE.git"
 
 
 def git(*arguments, cwd: Path, check=True) -> subprocess.CompletedProcess:
-    return subprocess.run(["git", *arguments], cwd=cwd, check=check, capture_output=True, text=True)
+    result = subprocess.run(["git", *arguments], cwd=cwd, capture_output=True, text=True)
+    if check and result.returncode != 0:
+        raise SystemExit(f"git {' '.join(arguments)} failed ({result.returncode}):\n{result.stderr}")
+    return result
 
 
 def main() -> int:
@@ -61,7 +68,10 @@ def main() -> int:
         opence = (Path.cwd() / "OpenCE").resolve()
         if not opence.exists():
             print(f"cloning OpenCE {commit[:12]} into {opence}")
-            subprocess.run(["git", "clone", "--filter=blob:none", UPSTREAM, str(opence)], check=True)
+            # (long paths: Windows' 260 characters are too few for some of its files)
+            subprocess.run(["git", "-c", "core.longpaths=true", "clone", "--filter=blob:none", "--no-checkout", UPSTREAM,
+                            str(opence)], check=True)
+            git("config", "core.longpaths", "true", cwd=opence)
         git("checkout", "--quiet", commit, cwd=opence)
 
     for name in NEW_FILES:

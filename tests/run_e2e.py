@@ -14,7 +14,11 @@ With --opence (an OpenCE checkout the bridge was applied to and built:
 tools/apply_to_opence.py, then configure.py and ninja linux), the game itself
 plays too: a StageKit map (OpenCE's tools/stagekit, no game data), on which
 debug.chasm_say speaks to whoever is near - no one, so Cortana answers - and
-the game's log must show her reply as subtitles.
+debug.chasm_react narrates an event she reacts to; the game's log must show
+both answers as subtitles. With --maps too (the retail Xbox maps, extracted
+from your disc), that is played on a30 among its marines, and then network
+co-op: a second game joins the first, talks to the AI, and must get its
+words and the answer back from the host.
 
 Needs a chasm binary (cargo build -p chasm in a chasm checkout) and, for it,
 ONNX Runtime's library (LD_LIBRARY_PATH), and the harness built for 32-bit
@@ -77,47 +81,123 @@ def members(speaker: str, words: str) -> str:
     return json.dumps(body)[1:-1]
 
 
-def play_in_game(opence: Path, environment: dict, scratch: Path) -> list:
-    """the game on a StageKit map, saying debug.chasm_say's words; its failures"""
+def stage_folder(runner, program, folder: Path, maps: Path = None) -> None:
+    """a game's folder: OpenCE's StageKit map (or, with maps, the retail maps), the profile"""
+    folder.mkdir()
+    if maps:
+        (folder / "maps").symlink_to(maps.resolve(), target_is_directory=True)
+    else:
+        runner.generate(program, "elevator", folder)
+        (folder / "maps").mkdir(exist_ok=True)
+        (folder / "maps" / "ui.map").write_bytes(
+            runner.struct.pack("<II", runner.MAP_HEADER_SIGNATURE, runner.XBOX_MAP_VERSION))
+    shutil.copytree(REPOSITORY / "chasm-profile", folder / "chasm-profile")
+
+
+def wait_for_log(game, log: Path, needles, seconds: float) -> str:
+    """the game's log once it has one of the needles (or the time is up)"""
+    deadline = time.time() + seconds
+    while time.time() < deadline and game.poll() is None:
+        text = log.read_text(errors="replace") if log.exists() else ""
+        if any(needle in text for needle in needles):
+            time.sleep(1.5)
+            break
+        time.sleep(0.25)
+    return log.read_text(errors="replace") if log.exists() else ""
+
+
+def show(text: str) -> None:
+    lines = [line for line in text.splitlines() if "chasm" in line or "fault" in line]
+    print("   " + "\n   ".join(lines[-14:]))
+
+
+def crashed(text: str) -> bool:
+    return "segmentation fault" in text or "exception" in text.lower()
+
+
+def play_in_game(opence: Path, environment: dict, scratch: Path, maps: Path = None) -> list:
+    """the game alone, saying debug.chasm_say's words and narrating debug.chasm_react's event: on a StageKit map
+    (no one near: Cortana answers both), or with maps on The Silent Cartographer... a30, Halo, among its marines"""
     sys.path.insert(0, str(opence / "tools" / "stagekit" / "tests"))
     import runner  # (OpenCE's tools/stagekit/tests/runner.py)
 
-    folder = scratch / "game"
-    folder.mkdir()
     (scratch / "stagekit").mkdir()
     program = runner.build(scratch / "stagekit")
-    runner.generate(program, "elevator", folder)
-    shutil.copytree(REPOSITORY / "chasm-profile", folder / "chasm-profile")
-    (folder / "maps").mkdir(exist_ok=True)
-    (folder / "maps" / "ui.map").write_bytes(
-        runner.struct.pack("<II", runner.MAP_HEADER_SIGNATURE, runner.XBOX_MAP_VERSION))
+    folder = scratch / "game"
+    stage_folder(runner, program, folder, maps)
     os.environ["CHASM_BRIDGE_ROOT"] = environment["CHASM_BRIDGE_ROOT"]
+    level = "levels\\a30\\a30" if maps else "custom_maps\\void"
     game = runner.launch(folder, "bot:1", "127.10.9.10", "127.10.9.11", "log",
-                         init="map_name custom_maps\\void\n", HALO_FIXED_STEP="1",
-                         HALO_CHASM_URL="http://127.0.0.1:7341", HALO_CHASM_SAY="Cortana, where are we?",
-                         HALO_CHASM_MICROPHONE_WARM="false")
-    log = folder / "game.log"
-    deadline = time.time() + 60
+                         init=f"map_name {level}\n", HALO_FIXED_STEP="1",
+                         HALO_CHASM_URL="http://127.0.0.1:7341", HALO_CHASM_SAY="Johnson, follow me.",
+                         HALO_CHASM_REACT="Covenant dropships are coming in over the ridge.",
+                         HALO_CHASM_MICROPHONE_WARM="false", HALO_CHASM_IDLE_CHATTER="0")
     try:
-        while time.time() < deadline and game.poll() is None:
-            text = log.read_text(errors="replace") if log.exists() else ""
-            if "chasm: subtitle: Cortana:" in text or "chasm: subtitle: chasm:" in text:
-                time.sleep(1)
-                break
-            time.sleep(0.25)
+        text = wait_for_log(game, folder / "game.log", ["chasm: subtitle: chasm:"], 1)
+        # (the words' answer, then the reaction's)
+        deadline = time.time() + 90
+        while time.time() < deadline and game.poll() is None and text.count("chasm: subtitle: ") < 3:
+            time.sleep(0.5)
+            text = (folder / "game.log").read_text(errors="replace")
+        time.sleep(1.5)
+        text = (folder / "game.log").read_text(errors="replace")
     finally:
         game.kill()
         game.wait()
-    text = log.read_text(errors="replace") if log.exists() else ""
-    lines = [line for line in text.splitlines() if "chasm" in line]
-    print("   " + "\n   ".join(lines[-12:]))
+    show(text)
     failures = []
-    if "segmentation fault" in text or "exception" in text.lower():
+    if crashed(text):
         failures.append("the game crashed")
-    if "chasm: subtitle: You: Cortana, where are we?" not in text:
+    if "chasm: subtitle: You: Johnson, follow me." not in text:
         failures.append("the game did not say debug.chasm_say's words")
-    if "chasm: subtitle: Cortana:" not in text:
-        failures.append("Cortana's reply was not shown in the game")
+    if " reacts to: World: Covenant dropships" not in text:
+        failures.append("the game did not give debug.chasm_react's reaction")
+    answers = [line for line in text.splitlines() if "chasm: subtitle: " in line and "subtitle: You:" not in line]
+    if len(answers) < 2:
+        failures.append(f"the game showed {len(answers)} answer(s), not the words' and the reaction's")
+    if maps and "Master Chief to Cortana" in text:
+        failures.append("on a30 Cortana answered: no marine was found near the player")
+    return failures
+
+
+def play_coop(opence: Path, environment: dict, scratch: Path, maps: Path) -> list:
+    """network co-op on a30 (the retail maps: hosting needs the menus' ui.map): a joiner holds talk to AI (its
+    microphone debug.voice_test's tone; the fake recognition hears "Johnson, follow me."), the host recognizes
+    it, runs the turn and relays the voice, and the joiner shows its own words and the answer"""
+    sys.path.insert(0, str(opence / "tools" / "stagekit" / "tests"))
+    import runner
+
+    games = []
+    for name in ("host", "join"):
+        stage_folder(runner, None, scratch / name, maps)
+    os.environ["CHASM_BRIDGE_ROOT"] = environment["CHASM_BRIDGE_ROOT"]
+    common = dict(HALO_CHASM_MICROPHONE_WARM="false", HALO_CHASM_IDLE_CHATTER="0", HALO_CHASM_REACTIONS="false")
+    games.append(runner.launch(scratch / "host", "bot:1", "127.10.21.10", "127.10.21.255", "host:levels\\a30\\a30:coop",
+                               HALO_NETWORK_TEST_START="5", HALO_CHASM_URL="http://127.0.0.1:7341", **common))
+    time.sleep(3)
+    games.append(runner.launch(scratch / "join", "bot:1", "127.10.21.11", "127.10.21.255", "join",
+                               HALO_CHASM_SAY="(spoken)", HALO_VOICE_TEST="1", **common))
+    try:
+        joiner = wait_for_log(games[1], scratch / "join" / "game.log",
+                              ["chasm: subtitle: Sergeant", "chasm: subtitle: Cortana:", "chasm: subtitle: chasm:"], 180)
+    finally:
+        for game in games:
+            game.kill()
+            game.wait()
+    host = (scratch / "host" / "game.log").read_text(errors="replace")
+    print("   host:")
+    show(host)
+    print("   joiner:")
+    show(joiner)
+    failures = []
+    if crashed(host) or crashed(joiner):
+        failures.append("co-op: a game crashed")
+    if "chasm: a recording of" not in host:
+        failures.append("co-op: the host did not get the joiner's recording")
+    if "chasm: subtitle: You: Johnson, follow me." not in joiner:
+        failures.append("co-op: the joiner did not see its words come back")
+    if not [line for line in joiner.splitlines() if "chasm: subtitle: " in line and "You:" not in line]:
+        failures.append("co-op: the joiner showed no answer")
     return failures
 
 
@@ -137,6 +217,7 @@ def main() -> int:
     parser.add_argument("--chasm", required=True, help="the chasm binary")
     parser.add_argument("--harness", required=True, help="tests/client_harness's binary")
     parser.add_argument("--opence", help="an OpenCE checkout with the bridge, built (ninja linux)")
+    parser.add_argument("--maps", help="with --opence: the retail Xbox maps folder, for a30 alone and in co-op")
     parser.add_argument("--keep", action="store_true", help="keep the scratch folder")
     arguments = parser.parse_args()
 
@@ -185,8 +266,12 @@ def main() -> int:
                 print(run.stdout[-3000:])
                 print(run.stderr[-3000:])
         if arguments.opence:
-            print("== in the game: \"Cortana, where are we?\"")
-            failures += play_in_game(Path(arguments.opence).resolve(), environment, scratch)
+            maps = Path(arguments.maps) if arguments.maps else None
+            print("== in the game: \"Johnson, follow me.\" and a reaction")
+            failures += play_in_game(Path(arguments.opence).resolve(), environment, scratch, maps)
+            if maps:
+                print("== in co-op: the joiner talks to the AI")
+                failures += play_coop(Path(arguments.opence).resolve(), environment, scratch, maps)
         # what chasm made of it
         imported = (scratch / "profiles" / "halo-combat-evolved" / "profile.json").exists()
         active = json.loads((scratch / "settings.json").read_text()).get("profile")

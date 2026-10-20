@@ -92,7 +92,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: OpenCE with the bridge
-        run: python tools/apply_to_opence.py
+        run: |
+          git config --global core.longpaths true
+          python tools/apply_to_opence.py
 
       - uses: actions/cache@v4
         with:

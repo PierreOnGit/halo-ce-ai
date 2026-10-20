@@ -1,3 +1,83 @@
+diff --git a/port/linux/game/network_distributed.c b/port/linux/game/network_distributed.c
+index 174a99a..1247db8 100644
+--- a/port/linux/game/network_distributed.c
++++ b/port/linux/game/network_distributed.c
+@@ -77,6 +77,7 @@ machine (their datum identifiers need not be).
+ #include "network_coop.h"
+ #include "network_distributed.h"
+ #include "network_voice.h"
++#include "chasm_bridge.h"
+ #include "network_aim_assist.h"
+ #include "map_share.h"
+ #include "latency_meter.h"
+@@ -4481,6 +4482,12 @@ void network_distributed_handle_message(
+ 		network_voice_handle_message(machine_index, message, size);
+ 		return;
+ 	}
++	/* (the AI characters' co-op: chasm_bridge.c) */
++	if (chasm_bridge_handles_message(message, size))
++	{
++		chasm_bridge_handle_message(machine_index, message, size);
++		return;
++	}
+ 	/* (map sharing's, in the lobby too, over the host's connection alone:
+ 	map_share.c) */
+ 	if (map_share_handles_message(message, size))
+diff --git a/port/linux/game/network_distributed.h b/port/linux/game/network_distributed.h
+index fbcfcb1..318e6da 100644
+--- a/port/linux/game/network_distributed.h
++++ b/port/linux/game/network_distributed.h
+@@ -138,6 +138,14 @@ enum
+ 	client, reliably, when it is ready and when the policy changes */
+ 	_distributed_message_aim_assist_policy = 90,
+ 
++	/* the AI characters' co-op (chasm_bridge.c): a client's recorded words to
++	the host, reliably, a quarter-second at a time; the host's lines (what a
++	player said, a notice, the voice stopped) and the characters' voices,
++	Opus, to every client, reliably */
++	_distributed_message_chasm_audio_up = 91,
++	_distributed_message_chasm_line_down = 92,
++	_distributed_message_chasm_voice_down = 93,
++
+ 	NUMBER_OF_DISTRIBUTED_MESSAGES
+ };
+ 
+diff --git a/port/linux/include/halo_keyboard.h b/port/linux/include/halo_keyboard.h
+index 9f19a92..3234a2c 100644
+--- a/port/linux/include/halo_keyboard.h
++++ b/port/linux/include/halo_keyboard.h
+@@ -42,6 +42,9 @@ enum halo_keyboard_action
+ 	everyone, or to the team: port/linux/game/network_chat.c) */
+ 	HALO_KEYBOARD_CHAT,
+ 	HALO_KEYBOARD_TEAM_CHAT,
++	/* (the AI characters', which the game itself does not read:
++	halo_talk_to_ai_held, port/linux/game/chasm_bridge.c) */
++	HALO_KEYBOARD_TALK_TO_AI,
+ 	NUMBER_OF_HALO_KEYBOARD_ACTIONS
+ };
+ 
+@@ -52,6 +55,8 @@ unsigned long halo_keyboard_actions(short controller_index);
+ /* whether voice chat's push to talk is held (controls.push_to_talk), in the
+ game and in the menus alike */
+ int halo_push_to_talk_held(void);
++/* whether talking to the AI characters is held (controls.talk_to_ai) */
++int halo_talk_to_ai_held(void);
+ 
+ /* the first controller's buttons (with the touch controls'), as the text
+ chat's on-screen keyboard reads them: a bit for each (port/linux/game/
+diff --git a/port/linux/include/halo_port_limits.h b/port/linux/include/halo_port_limits.h
+index 44ef6d0..41ef0d8 100644
+--- a/port/linux/include/halo_port_limits.h
++++ b/port/linux/include/halo_port_limits.h
+@@ -66,7 +66,7 @@ is newer (network_client_manager.c). A host advertises it, with its netcode,
+ in its game's advertisement's reserved bytes (network_server_message_handler.c),
+ which hosts built before there was a version send as zeros: version 0.
+ Raise it with any change to what the machines send each other. */
+-#define HALO_PORT_NETWORK_VERSION 32
++#define HALO_PORT_NETWORK_VERSION 33
+ /* ... the advertisement's reserved bytes: the version (a little-endian word),
+ then flags */
+ #define HALO_PORT_ADVERTISED_VERSION_OFFSET 0
 diff --git a/port/linux/src/dsound_sdl.c b/port/linux/src/dsound_sdl.c
 index 01fb4f1..2d644fa 100644
 --- a/port/linux/src/dsound_sdl.c
@@ -38,10 +118,20 @@ index 01fb4f1..2d644fa 100644
  	limit(output, frames);
  }
 diff --git a/port/linux/src/port_config.c b/port/linux/src/port_config.c
-index 76b16c4..fd2d830 100644
+index 76b16c4..9e30e55 100644
 --- a/port/linux/src/port_config.c
 +++ b/port/linux/src/port_config.c
-@@ -405,6 +405,27 @@ static const struct config_setting config_settings[] =
+@@ -359,6 +359,9 @@ static const struct config_setting config_settings[] =
+ 		"Save a PNG screenshot beside maps/ (press once per capture)." },
+ 	{ "controls.push_to_talk", _config_string, "\"V\"", "HALO_KEY_PUSH_TO_TALK", _environment_value, _platform_all,
+ 		"Voice chat: talk while it is held (audio.voice_chat \"push_to_talk\")." },
++	{ "controls.talk_to_ai", _config_string, "\"B\"", "HALO_KEY_TALK_TO_AI", _environment_value, _platform_all,
++		"Talk to the AI characters while it is held (chasm.enabled), in network\n"
++		"co-op too; alone, controls.push_to_talk does as well." },
+ 	{ "controls.chat", _config_string, "\"T\"", "HALO_KEY_CHAT", _environment_value, _platform_all,
+ 		"Network games' text chat: type a line to everyone (Enter sends it,\n"
+ 		"Escape lets it go)." },
+@@ -405,6 +408,37 @@ static const struct config_setting config_settings[] =
  	{ "bots.teams", _config_string, "\"even\"", "HALO_BOT_TEAMS", _environment_value, _platform_all,
  		"In team games: \"even\" puts the bots on both teams, evening them with\n"
  		"the players; \"against\" puts them all on the team the players are not on." },
@@ -62,6 +152,16 @@ index 76b16c4..fd2d830 100644
 +		"Keep the microphone open in the campaign, so that the first word said\n"
 +		"with push to talk is not lost while it opens; what it hears is kept\n"
 +		"only while push to talk is held. false opens it at each press." },
++	{ "chasm.reactions", _config_boolean, "true", "HALO_CHASM_REACTIONS", _environment_value, _platform_all,
++		"The characters speak up on their own: a friend killed beside them,\n"
++		"Covenant contact, the fight over, a player's shields down, a player\n"
++		"taking a vehicle, a long quiet." },
++	{ "chasm.reaction_cooldown", _config_real, "20.0", "HALO_CHASM_REACTION_COOLDOWN", _environment_value,
++		_platform_all,
++		"The fewest seconds between two of their own remarks." },
++	{ "chasm.idle_chatter", _config_real, "150.0", "HALO_CHASM_IDLE_CHATTER", _environment_value, _platform_all,
++		"After this many seconds with nothing said and no fight, the nearest\n"
++		"friend may say something; 0 never." },
 +	{ "chasm.bridge_folder", _config_string, "\"\"", "HALO_CHASM_BRIDGE_FOLDER", _environment_value, _platform_all,
 +		"The folder chasm finds the game by (its heartbeat, the characters'\n"
 +		"profile, the bridge's settings). Empty: chasm's own, CHASM_BRIDGE_ROOT,\n"
@@ -69,7 +169,7 @@ index 76b16c4..fd2d830 100644
  	{ "display.viewmodel_shield", _config_boolean, "false", "HALO_VIEWMODEL_SHIELD", _environment_value, _platform_all,
  		"The energy shield's flare on the first-person arms too, as on the body\n"
  		"(the stock game draws it on the body only)." },
-@@ -611,9 +632,11 @@ static const struct config_setting config_settings[] =
+@@ -611,9 +645,11 @@ static const struct config_setting config_settings[] =
  		"The Discord application internet play invites go through while the\n"
  		"Discord desktop client runs; empty for none." },
  
@@ -83,16 +183,54 @@ index 76b16c4..fd2d830 100644
  	{ "streamer.enabled", _config_boolean, "false", "HALO_STREAMER_MODE", _environment_value, _platform_all,
  		"Hide offensive words in names and text from other players, maps and mods\n"
  		"as stars, at the levels below (Settings > Network Setup > Streamer Mode)." },
-@@ -741,6 +764,9 @@ static const struct config_setting config_settings[] =
+@@ -741,6 +777,12 @@ static const struct config_setting config_settings[] =
  	{ "debug.voice_test", _config_boolean, "false", "HALO_VOICE_TEST", _environment_set_is_true, _platform_all,
  		"Voice chat's automated tests: a tone instead of the microphone, and\n"
  		"each voice heard logged once a second." },
 +	{ "debug.chasm_say", _config_string, "\"\"", "HALO_CHASM_SAY", _environment_value, _platform_all,
 +		"The chasm bridge's automated tests: these words said, as if heard, two\n"
 +		"seconds into each map (port/linux/game/chasm_bridge.c)." },
++	{ "debug.chasm_react", _config_string, "\"\"", "HALO_CHASM_REACT", _environment_value, _platform_all,
++		"The chasm bridge's automated tests: this narration given to the\n"
++		"nearest friend (else Cortana) as a reaction, four seconds into each map." },
  	{ "debug.null_renderer", _config_boolean, "false", "HALO_NULL_RENDERER", _environment_set_is_true, _platform_all,
  		"Run without a window, drawing nothing." },
  	{ "debug.gl_debug", _config_boolean, "false", "HALO_GL_DEBUG", _environment_set_is_true, _platform_all,
+diff --git a/port/linux/src/xinput_sdl.c b/port/linux/src/xinput_sdl.c
+index 22ab8d8..5826fd8 100644
+--- a/port/linux/src/xinput_sdl.c
++++ b/port/linux/src/xinput_sdl.c
+@@ -553,7 +553,7 @@ static const char *const binding_settings[NUMBER_OF_HALO_KEYBOARD_ACTIONS] =
+ 	"controls.jump", "controls.crouch", "controls.fire", "controls.throw_grenade", "controls.melee",
+ 	"controls.reload", "controls.zoom", "controls.switch_weapon", "controls.switch_grenade", "controls.action",
+ 	"controls.flashlight", "controls.scoreboard", "controls.pause", "controls.screenshot",
+-	"controls.push_to_talk", "controls.chat", "controls.team_chat",
++	"controls.push_to_talk", "controls.chat", "controls.team_chat", "controls.talk_to_ai",
+ };
+ 
+ static const struct
+@@ -783,6 +783,21 @@ int halo_push_to_talk_held(void)
+ 	return 0;
+ }
+ 
++int halo_talk_to_ai_held(void)
++{
++	struct platform_input_state input;
++	int slot;
++
++	bindings_read();
++	platform_input_read(&input, FALSE);
++	for (slot = 0; slot < MAXIMUM_BINDINGS; slot++)
++	{
++		if (input_held(&input, bindings[HALO_KEYBOARD_TALK_TO_AI][slot]))
++			return 1;
++	}
++	return 0;
++}
++
+ /* A scroll of the wheel switches weapons once: it holds Y for WHEEL_PRESS_MS
+ once the wheel has turned a notch, and the scroll lasts until the wheel has
+ been still for WHEEL_SCROLL_GAP_MS. One notch often arrives as several events
 diff --git a/source/interface/hud.c b/source/interface/hud.c
 index bb7aa63..f40f548 100644
 --- a/source/interface/hud.c

@@ -182,6 +182,8 @@ struct results
 
 /* frames: a game's frame of updates, the mix pulled as the audio thread
 would (10 ms at 48 kHz) */
+static int mode = _chasm_mode_host;
+
 static void run(int milliseconds, int until_idle, struct results *results, int *last_event)
 {
 	Uint64 start = SDL_GetTicks();
@@ -192,7 +194,7 @@ static void run(int milliseconds, int until_idle, struct results *results, int *
 		float mix[480 * 2];
 		int index;
 
-		chasm_client_update(1);
+		chasm_client_update(mode);
 		while (chasm_client_next_event(&event))
 		{
 			printf("  %6.2fs event %-8s turn %d npc \"%s\" %s%s%s\n", (double)SDL_GetTicks() / 1000.0,
@@ -205,7 +207,9 @@ static void run(int milliseconds, int until_idle, struct results *results, int *
 			case _chasm_event_subtitle: results->subtitles++; break;
 			case _chasm_event_action:
 				results->actions++;
-				snprintf(results->action, sizeof(results->action), "%s", event.action_id);
+				/* (the first: the order's, not a later reaction's) */
+				if (!results->action[0])
+					snprintf(results->action, sizeof(results->action), "%s", event.action_id);
 				break;
 			case _chasm_event_done: results->done++; break;
 			case _chasm_event_error: results->errors++; break;
@@ -237,17 +241,26 @@ int main(int argc, char **argv)
 	struct results results;
 	int last_event = 0;
 	int turn;
+	/* the host's relays of the turn's voices, kept for the client's part */
+	static struct chasm_relay relays[64];
+	int relay_count = 0, relay_frames = 0;
+	int relayed_heard = 0, relayed_subtitles = 0, reacted = 0;
 	const char *members = argc > 2 ? argv[2] :
 		"\"request_id\":\"harness_1\",\"npc_key\":\"Sergeant Johnson\",\"npc_name\":\"Sergeant Johnson\","
 		"\"player_text\":\"Johnson, follow me.\",\"want_tts\":true,"
 		"\"location\":{\"cell\":\"a30\",\"worldspace\":\"Halo\",\"region\":\"Halo\",\"major\":\"Halo\",\"minor\":\"a30\"},"
 		"\"metadata\":{\"targeting\":{\"nearby_npcs\":["
-		"{\"npc_key\":\"Cortana\",\"npc_name\":\"Cortana\",\"characterId\":\"Cortana\",\"distance_m\":0.00,\"under_crosshair\":false},"
 		"{\"npc_key\":\"Sergeant Johnson\",\"npc_name\":\"Sergeant Johnson\",\"characterId\":\"Sergeant Johnson\",\"distance_m\":3.20,\"under_crosshair\":true,\"hostile\":false},"
 		"{\"npc_key\":\"Bisenti\",\"npc_name\":\"Bisenti\",\"characterId\":\"Bisenti\",\"distance_m\":6.10,\"under_crosshair\":false,\"hostile\":false}]},"
 		"\"combat_with\":[],\"in_combat\":false,\"npc_state\":{\"teammate\":true,\"in_combat\":false},"
 		"\"macros\":{\"player_name\":\"Master Chief\",\"major_location\":\"Halo\",\"health\":\"100%\",\"weapon\":\"assault rifle\",\"difficulty\":\"Heroic\"},"
 		"\"gamestate\":{\"player_name\":\"Master Chief\",\"major_location\":\"Halo\",\"health\":\"100%\",\"weapon\":\"assault rifle\",\"difficulty\":\"Heroic\"}}";
+	const char *reaction =
+		"\"request_id\":\"harness_reaction\",\"npc_key\":\"Bisenti\",\"npc_name\":\"Bisenti\",\"player_text\":\"\","
+		"\"want_tts\":true,\"location\":{\"major\":\"Halo\"},"
+		"\"metadata\":{\"reaction\":{\"narration\":\"World: Mendoza was just killed, right beside you.\"},"
+		"\"targeting\":{\"nearby_npcs\":["
+		"{\"npc_key\":\"Bisenti\",\"npc_name\":\"Bisenti\",\"characterId\":\"Bisenti\",\"distance_m\":2.0,\"under_crosshair\":true}]}}";
 
 	if (argc < 2)
 	{
@@ -279,20 +292,112 @@ int main(int argc, char **argv)
 			run(100, 0, &results, &last_event);
 	}
 
-	printf("4. the character's turn\n");
+	printf("4. the character's turn (its voices kept for co-op clients too)\n");
+	chasm_client_set_relaying(1);
 	turn = chasm_client_send_turn(members);
 	printf("  turn %d\n", turn);
 	last_event = 0;
-	run(180000, 1, &results, &last_event);
-	printf("  mixed %ld chunks of voice (10 ms each)\n", results.mixed);
+	{
+		Uint64 start = SDL_GetTicks();
 
-	printf("5. a checkpoint told\n");
+		while (SDL_GetTicks() - start < 180000)
+		{
+			run(20, 0, &results, &last_event);
+			while (relay_count < 64 && chasm_client_next_relay(&relays[relay_count]))
+			{
+				relay_frames += relays[relay_count].count;
+				if (relays[relay_count].first)
+					printf("  relay: \"%s\" (%s)\n", relays[relay_count].caption, relays[relay_count].npc_key);
+				relay_count++;
+			}
+			if (results.done + results.errors > 0 && !chasm_client_busy())
+				break;
+		}
+	}
+	chasm_client_set_relaying(0);
+	printf("  mixed %ld chunks of voice (10 ms each); %d relays, %d frames\n", results.mixed, relay_count, relay_frames);
+
+	printf("5. a co-op client's words: recorded as Opus, recognized by the host\n");
+	mode = _chasm_mode_client;
+	chasm_client_listen(1);
+	run(1500, 0, &results, &last_event);
+	chasm_client_listen(0);
+	{
+		/* (as the bridge sends them: a dozen frames a message, which the host
+		puts back end to end) */
+		static unsigned char lengths[2000], packed[2000 * 255];
+		unsigned char chunk_lengths[12], chunk_bytes[12 * 255];
+		int count = 0, size = 0, taken;
+		int heard_before = results.heard;
+
+		while ((taken = chasm_client_take_packets(chunk_lengths, chunk_bytes, 12, (int)sizeof(chunk_bytes))) > 0)
+		{
+			int index, bytes = 0;
+
+			for (index = 0; index < taken; index++)
+				bytes += chunk_lengths[index];
+			memcpy(lengths + count, chunk_lengths, (size_t)taken);
+			memcpy(packed + size, chunk_bytes, (size_t)bytes);
+			count += taken;
+			size += bytes;
+		}
+		printf("  %d frames (%d bytes) from the client\n", count, size);
+		/* (the host's, which this machine is again first: another mode stops
+		what was running) */
+		mode = _chasm_mode_host;
+		run(50, 0, &results, &last_event);
+		turn = chasm_client_recognize_packets(lengths, packed, count);
+		printf("  turn %d\n", turn);
+		{
+			Uint64 start = SDL_GetTicks();
+
+			while (results.heard == heard_before && !results.errors && SDL_GetTicks() - start < 60000)
+				run(100, 0, &results, &last_event);
+		}
+		relayed_heard = results.heard > heard_before;
+	}
+
+	printf("6. the relays played on a co-op client\n");
+	{
+		int subtitles_before = results.subtitles;
+		long mixed_before = results.mixed;
+		int index;
+
+		mode = _chasm_mode_client;
+		run(100, 0, &results, &last_event);
+		for (index = 0; index < relay_count; index++)
+		{
+			relays[index].turn += 1000;
+			chasm_client_play_relay(&relays[index]);
+		}
+		run(4000, 0, &results, &last_event);
+		relayed_subtitles = results.subtitles - subtitles_before;
+		printf("  subtitles %d, voice %ld\n", relayed_subtitles, results.mixed - mixed_before);
+		mode = _chasm_mode_host;
+		run(100, 0, &results, &last_event);
+	}
+
+	printf("7. a reaction turn (nobody spoke: a friend was killed)\n");
+	{
+		int done_before = results.done;
+
+		turn = chasm_client_send_turn(reaction);
+		printf("  turn %d\n", turn);
+		run(180000, 1, &results, &last_event);
+		reacted = results.done > done_before;
+		/* (the harness's run stops at the first done: the voice played out) */
+		run(1500, 0, &results, &last_event);
+	}
+
+	printf("8. a checkpoint told\n");
 	chasm_client_post("/api/headless/v1/save-sync/events",
 		"{\"event\":\"checkpoint\",\"gameId\":\"halo-combat-evolved\",\"saveId\":\"a30-checkpoint\",\"saveName\":\"Halo checkpoint\"}");
 	run(1500, 0, &results, &last_event);
 
+	printf("co-op: client heard %d, relays %d, relayed subtitles %d; reaction %d\n", relayed_heard, relay_count,
+		relayed_subtitles, reacted);
 	printf("heard %d, subtitles %d, actions %d (%s), done %d, errors %d, voice %ld\n", results.heard,
 		results.subtitles, results.actions, results.action, results.done, results.errors, results.mixed);
 	return results.heard && results.subtitles && results.actions && results.done && !results.errors &&
-		results.mixed > 0 ? 0 : 1;
+		results.mixed > 0 && relayed_heard && relay_count > 0 && relayed_subtitles > 0 && reacted ? 0 : 1;
 }

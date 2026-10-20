@@ -47,8 +47,8 @@ The GitHub Actions workflow builds Linux and Windows with the bridge applied. Do
 To build it yourself:
 
 ```sh
-python tools/apply_to_opence.py            # clones OpenCE at the pinned commit into ./OpenCE, applies the bridge
-cd OpenCE
+python tools/apply_to_opence.py            # clones OpenCE at the pinned commit into ./OpenCE-build, applies the bridge
+cd OpenCE-build
 python configure.py --release              # then follow OpenCE's README for your platform's tools
 ninja                                      # build/linux/halo or build/windows/halo.exe
 ```
@@ -152,7 +152,7 @@ The game logs everything the bridge does, with a `chasm:` prefix (stderr, or `ha
 ```sh
 tests/client_harness/build.sh /tmp/harness                  # chasm_client.c outside the game (32-bit, SDL3)
 python tests/run_e2e.py --chasm <chasm>/target/debug/chasm --harness /tmp/harness \
-    [--opence OpenCE [--maps <your extracted maps/>]]
+    [--opence OpenCE-build [--maps <your extracted maps/>]]
 ```
 
 **The client harness** checks the following:

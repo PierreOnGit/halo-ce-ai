@@ -95,7 +95,7 @@ Tools with "Desktop development with C++" (it provides the x86 libraries and the
 
 ```
 python tools/apply_to_opence.py
-cd OpenCE
+cd OpenCE-build
 python configure.py --release
 ninja windows
 ```

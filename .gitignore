@@ -1,5 +1,5 @@
 # tools/apply_to_opence.py's checkout
-/OpenCE/
+/OpenCE-build/
 # tests/client_harness/build.sh's default output
 /tests/client_harness/harness
 __pycache__/

@@ -24,7 +24,7 @@ Needs a chasm binary (cargo build -p chasm in a chasm checkout) and, for it,
 ONNX Runtime's library (LD_LIBRARY_PATH), and the harness built for 32-bit
 with SDL3 (tests/client_harness/build.sh).
 
-    python tests/run_e2e.py --chasm /path/to/chasm/target/debug/chasm --harness /path/to/harness [--opence OpenCE]
+    python tests/run_e2e.py --chasm /path/to/chasm/target/debug/chasm --harness /path/to/harness [--opence OpenCE-build]
 """
 
 import argparse

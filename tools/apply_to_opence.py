@@ -14,7 +14,8 @@ bridge is:
                                              messages, the talk to AI key)
 
 made against the OpenCE commit in opence/OPENCE_COMMIT. Without --opence, a
-checkout of that commit is cloned into ./OpenCE; with it, the given checkout
+checkout of that commit is cloned into ./OpenCE-build (not ./OpenCE: on
+Windows and macOS, that is this repository's opence/); with it, the given checkout
 is used as it is (at another commit, the patch may not apply).
 
     python tools/apply_to_opence.py [--opence DIR] [--copy-profile DIR]
@@ -53,7 +54,7 @@ def git(*arguments, cwd: Path, check=True) -> subprocess.CompletedProcess:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--opence", help="an OpenCE checkout (default: clone the pinned commit into ./OpenCE)")
+    parser.add_argument("--opence", help="an OpenCE checkout (default: clone the pinned commit into ./OpenCE-build)")
     parser.add_argument("--copy-profile", metavar="DIR",
                         help="also copy chasm-profile/ into DIR (the game's data folder, holding maps/)")
     arguments = parser.parse_args()
@@ -65,7 +66,7 @@ def main() -> int:
             print(f"{opence} is not an OpenCE checkout", file=sys.stderr)
             return 1
     else:
-        opence = (Path.cwd() / "OpenCE").resolve()
+        opence = (Path.cwd() / "OpenCE-build").resolve()
         if not opence.exists():
             # (that commit alone, shallow; long paths: Windows' 260 characters are too few for some of its files)
             print(f"fetching OpenCE {commit[:12]} into {opence}")
@@ -73,6 +74,11 @@ def main() -> int:
             git("init", "--quiet", cwd=opence)
             git("config", "core.longpaths", "true", cwd=opence)
             git("remote", "add", "origin", UPSTREAM, cwd=opence)
+        # (a folder of its own, not one inside this or another repository)
+        top = git("rev-parse", "--show-toplevel", cwd=opence, check=False).stdout.strip()
+        if not top or Path(top).resolve() != opence:
+            print(f"{opence} is not a checkout of its own; remove it and run this again", file=sys.stderr)
+            return 1
         # (the commit by its id; where a server will not give one so, main's
         # history, which holds it)
         for fetch in (["--depth", "1", "origin", commit], ["--depth", "500", "origin", "main"], ["--unshallow", "origin"]):

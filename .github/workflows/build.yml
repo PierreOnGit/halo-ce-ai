@@ -49,26 +49,26 @@ jobs:
 
       - uses: actions/cache@v4
         with:
-          path: OpenCE/build/linux/third_party
+          path: OpenCE-build/build/linux/third_party
           key: linux-third-party-${{ hashFiles('opence/OPENCE_COMMIT') }}
 
       - name: Release
-        working-directory: OpenCE
+        working-directory: OpenCE-build
         run: python tools/ci_build.py linux release
 
       # (the game with the bridge, on OpenCE's staged maps: it runs, every
       # scenario plays as before)
       - name: StageKit
-        working-directory: OpenCE
+        working-directory: OpenCE-build
         run: python -m pytest -q tools/stagekit/tests
 
       - name: The profile beside the game
-        run: cp -r chasm-profile OpenCE/dist/halo-linux-release/
+        run: cp -r chasm-profile OpenCE-build/dist/halo-linux-release/
 
       - uses: actions/upload-artifact@v4
         with:
           name: halo-ce-ai-linux
-          path: OpenCE/dist/halo-linux-release
+          path: OpenCE-build/dist/halo-linux-release
           retention-days: 14
 
   windows:
@@ -98,20 +98,20 @@ jobs:
 
       - uses: actions/cache@v4
         with:
-          path: OpenCE/build/windows/third_party
+          path: OpenCE-build/build/windows/third_party
           key: windows-third-party-${{ hashFiles('opence/OPENCE_COMMIT') }}
 
       - name: Release
-        working-directory: OpenCE
+        working-directory: OpenCE-build
         run: python tools/ci_build.py windows release
 
       - name: The profile beside the game
-        run: cp -r chasm-profile OpenCE/dist/halo-windows-release/
+        run: cp -r chasm-profile OpenCE-build/dist/halo-windows-release/
 
       - uses: actions/upload-artifact@v4
         with:
           name: halo-ce-ai-windows
-          path: OpenCE/dist/halo-windows-release
+          path: OpenCE-build/dist/halo-windows-release
           retention-days: 14
 
   e2e:
@@ -188,7 +188,7 @@ jobs:
       - name: OpenCE with the bridge
         run: |
           python3 tools/apply_to_opence.py
-          cd OpenCE
+          cd OpenCE-build
           python3 configure.py --release --pgo=off --lto=off
           ninja linux
           mkdir -p dist/halo-linux-release && cp build/linux/halo dist/halo-linux-release/
@@ -201,4 +201,4 @@ jobs:
           LD_LIBRARY_PATH: /home/runner/ort:/usr/lib/i386-linux-gnu
         run: |
           python3 tests/run_e2e.py --chasm "$HOME/chasm/target/debug/chasm" \
-            --harness "$RUNNER_TEMP/harness" --opence OpenCE
+            --harness "$RUNNER_TEMP/harness" --opence OpenCE-build

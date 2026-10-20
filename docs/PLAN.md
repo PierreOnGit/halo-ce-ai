@@ -72,6 +72,24 @@ What stays as it is: the combat AI is Halo's own. The LLM decides what a charact
 the allowed orders it gives. The orders are carried out by the game's own AI, as the levels' scripts
 give them.
 
+## 2b. A second Spartan: Fred-104
+
+A companion Spartan the players can talk to, built from what the levels already have:
+
+- **Body and mind.** The host creates the players' own biped (the Master Chief's) and gives it a Marine
+  actor variant of the level's, with its weapon and grenades, as `actor_place` does. If Marines are near,
+  he joins their encounter and squad; otherwise he is a free actor.
+- **Keeping up.** Halo's "follow" needs an encounter's firing positions, which end where the encounter does.
+  So the bridge keeps a trail of the player's footsteps (on pathfinding ground, every 1.5 m). When every
+  player is beyond `chasm.spartan_leash` and nobody looks his way, he is moved onto the newest footstep
+  2-18 m from the player and out of sight. There he joins the Marines near him, or goes on his own. He
+  comes in the same way: at map start, and after a death at the next checkpoint.
+- **Orders** are his own: follow, wait, enter or exit a vehicle (gunner's seat first).
+- **Who he is:** `chasm_bridge.c` knows his unit, so speaker picking, reactions and subtitles treat him
+  as the character Fred-104 (`tools/build_profile.py`'s card).
+- **Not covered by CI:** StageKit maps have no actors and no pathfinding, so he only appears on the real
+  maps.
+
 ## 3. Tests
 
 - `tests/run_e2e.py` (real chasm, fake models):

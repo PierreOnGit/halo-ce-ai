@@ -2,6 +2,8 @@
 
 Hold a key and speak to the marine you're looking at in *Halo: Combat Evolved*. They answer out loud, in character, with subtitles, and can do what you ask: follow you, hold position, charge, get in the Warthog, hand you their weapon. A Grunt might even defect. If nobody is nearby, Cortana answers from inside your helmet.
 
+**A second Spartan fights beside you.** Fred-104, the Chief's oldest friend, joins you on every campaign level: Master Chief's armor, a Marine's combat AI, and a voice and memory of his own through chasm. He fights with the Marines around you, keeps up when you move on, holds when told to, jumps into the Warthog's gun when asked, and comes back at the next checkpoint if he falls.
+
 **Play it with a friend.** In network co-op, both of you can talk to the characters. Only the host needs the AI models; your friend just needs the game. The characters also **speak up on their own**: a squadmate killed beside them, Covenant contact, the fight over, your shields down, someone taking the Warthog, a long quiet.
 
 **What to download, which models fit your GPU, and the settings:** see [`docs/SETUP.md`](docs/SETUP.md). The plan behind it is in [`docs/PLAN.md`](docs/PLAN.md).
@@ -110,6 +112,18 @@ The host watches the game twice a second. When something happens that a squadmat
 - a player boarding a vehicle
 - `chasm.idle_chatter` seconds of quiet
 
+### Fred-104, the second Spartan
+
+On the host (or alone), Fred-104 comes in a few seconds into each campaign level, on a spot you just walked, out of your sight.
+
+- **His body:** the players' own biped, the Master Chief's armor. **His mind:** a Marine's actor variant from the level, with its weapon and grenades. He joins the squad of the Marines nearest you, so he fights from their positions and goes where the level's scripts send them.
+- **Keeping up:** when every player is more than `chasm.spartan_leash` meters from him and he is out of everyone's sight, he catches up on a spot you walked lately, behind you. He also joins the Marines there, or goes on his own if there are none.
+- **His orders** are his alone, not his squad's. "Follow me" (or "advance") makes him keep up. "Wait here" (or "stop following") makes him hold where he is. "Get in" puts him in the nearest vehicle's gunner seat, else a passenger seat. "Get out" takes him out. He can also hand you his weapon.
+- **If he falls,** he comes back at the next checkpoint. Everyone nearby will remark on it.
+- **Levels with no Marines at all** (the Library, for one) have no Marine mind to give him, so he sits those out.
+- In co-op he is the host's, and every player sees him: the host's objects are everyone's.
+- To give him another name, rename his card in chasm and change `chasm_spartan_character` in `chasm_bridge.c`.
+
 ### Settings (`config.toml`, next to the executable)
 
 | Setting | Default | What it does |
@@ -119,6 +133,8 @@ The host watches the game twice a second. When something happens that a squadmat
 | `chasm.reactions` | `true` | Characters speak up on their own (see above). |
 | `chasm.reaction_cooldown` | `20.0` | The fewest seconds between two of their own remarks. |
 | `chasm.idle_chatter` | `150.0` | Seconds of quiet before the nearest friend may say something. `0` is never. |
+| `chasm.spartan` | `true` | Fred-104 fights beside you in the campaign (see above). |
+| `chasm.spartan_leash` | `18.0` | How far, in meters, Fred may fall behind before he catches up. |
 | `chasm.url` | `"http://127.0.0.1:7341"` | Where chasm is (`http://` only). It can be on another machine. |
 | `chasm.distance` | `12.0` | How near, in meters, a character must be for you to talk to them. |
 | `chasm.microphone_warm` | `true` | Keeps the microphone open during the campaign so the first word isn't cut off. Audio is only recorded while the key is held. |

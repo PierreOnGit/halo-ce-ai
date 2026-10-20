@@ -57,6 +57,11 @@ picked around the player who spoke.
 #include "ai/actors.h"
 #include "ai/ai_script.h"
 #include "ai/encounters.h"
+#include "ai/actor_definitions.h"
+#include "cache/cache_files.h"
+#include "cutscene/cinematics.h"
+#include "units/bipeds.h"
+#include "units/unit_definitions.h"
 #include "rasterizer/rasterizer.h"
 #include "render/render.h"
 #include "scenario/scenario.h"
@@ -126,6 +131,13 @@ enum
 	at once */
 	CHASM_REACTION_SCAN_MS = 500,
 	CHASM_WATCHED = 32,
+
+	/* the Spartan: how often he is looked after (ms); the places the player
+	walked kept, where he may come in; how long a respawn waits for one out
+	of sight before taking one in it (ms) */
+	CHASM_SPARTAN_SCAN_MS = 500,
+	CHASM_CRUMBS = 16,
+	CHASM_SPARTAN_LATE_MS = 15000,
 };
 
 /* a world unit is ten feet */
@@ -142,6 +154,14 @@ enum
 #define CHASM_WITNESS_DISTANCE 15.0f
 
 #define CHASM_GAME_ID "halo-combat-evolved"
+/* the Spartan's places (world units): the player's walk kept every so far;
+where he comes in, this near the player and no nearer; the marines he joins,
+this near; out of a player's sight, beyond this cosine of the aim */
+#define CHASM_CRUMB_SPACING 0.5f
+#define CHASM_CRUMB_NEAREST 0.6f
+#define CHASM_CRUMB_FARTHEST 6.0f
+#define CHASM_SPARTAN_JOIN_DISTANCE 6.0f
+#define CHASM_SPARTAN_SEEN_COSINE 0.5f
 #define CHASM_CORTANA "Cortana"
 
 enum
@@ -251,6 +271,34 @@ static struct
 	short logged_count;
 } chasm_bridge;
 
+/* the Spartan (chasm.spartan): a second Spartan-II fighting beside the
+players, the Master Chief's biped with a Marine's mind. He joins the squad of
+the Marines around the player when there are some (their firing positions,
+their orders from the level's scripts), and when the players are far from
+him and he is out of their sight, he comes in on a place the player walked
+lately, behind them, and joins those around them, if any. Dead, he is back
+at the next checkpoint. */
+static struct chasm_character const chasm_spartan_character =
+{
+	"", "Fred-104", "fred|freddie|frederic|spartan|one oh four|104", FALSE
+};
+
+static struct
+{
+	long unit_index;
+	/* to come in at the next chance (a new map, a checkpoint), and since */
+	boolean wanted;
+	unsigned long wanted_since;
+	/* he keeps up with the players (follow me), or holds (wait here) */
+	boolean following;
+	/* no Marine's mind on this map to give him: said once */
+	boolean mindless;
+	unsigned long scanned_at;
+	/* the player's walk, the newest last */
+	real_point3d crumbs[CHASM_CRUMBS];
+	short crumb_count;
+} chasm_spartan;
+
 /* ---------- private code */
 
 /* what this machine is to chasm now (chasm_client.h's modes): in the
@@ -339,6 +387,8 @@ static struct chasm_character const *chasm_unit_character(
 
 	/* (the Flood's combat forms keep their hosts' dialogue, and say nothing;
 	nor do the Sentinels) */
+	if (unit_index == chasm_spartan.unit_index)
+		return &chasm_spartan_character;
 	if (chasm_contains(unit_name, "flood") || chasm_contains(unit_name, "sentinel"))
 		return NULL;
 	if (unit->unit.dialogue_index != NONE)
@@ -460,6 +510,8 @@ static char const *chasm_called(
 {
 	short index;
 
+	if (!strcmp(chasm_spartan_character.name, name))
+		return chasm_spartan_character.called;
 	for (index = 0; index < (short)NUMBEROF(chasm_characters); index++)
 	{
 		if (!strcmp(chasm_characters[index].name, name))
@@ -885,6 +937,364 @@ static long chasm_nearest_vehicle(
 	return vehicle;
 }
 
+/* ---------- the Spartan */
+
+static boolean chasm_spartan_alive(
+	void)
+{
+	struct unit_datum *unit = (struct unit_datum *)object_try_and_get_and_verify_type(
+		chasm_spartan.unit_index, _object_mask_unit);
+
+	return unit && !TEST_FLAG(unit->object.damage_flags, _object_dead_bit) && unit->unit.actor_index != NONE &&
+		unit->unit.player_index == NONE;
+}
+
+/* whether a player looks the place's way */
+static boolean chasm_spartan_seen(
+	real_point3d const *place)
+{
+	struct data_iterator iterator;
+	struct player_datum *player;
+
+	data_iterator_new(&iterator, player_data);
+	while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+	{
+		struct unit_datum *unit = (struct unit_datum *)object_try_and_get_and_verify_type(
+			player->unit_index, _object_mask_unit);
+		real_point3d eye;
+		real distance;
+
+		if (!unit)
+			continue;
+		unit_get_head_position(player->unit_index, (union real_point3d *)&eye);
+		distance = chasm_distance(&eye, place);
+		if (distance < 0.01f ||
+			((place->x - eye.x) * unit->unit.aiming_vector.i + (place->y - eye.y) * unit->unit.aiming_vector.j +
+				(place->z - eye.z) * unit->unit.aiming_vector.k) / distance > CHASM_SPARTAN_SEEN_COSINE)
+		{
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+/* the nearest of the players to a place (world units) */
+static real chasm_nearest_player_distance(
+	real_point3d const *place)
+{
+	struct data_iterator iterator;
+	struct player_datum *player;
+	real nearest = 1.0e9f;
+
+	data_iterator_new(&iterator, player_data);
+	while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+	{
+		struct object_datum *object = object_try_and_get_and_verify_type(player->unit_index, _object_mask_unit);
+
+		if (object)
+			nearest = MIN(nearest, chasm_distance(&object->object.position, place));
+	}
+	return nearest;
+}
+
+/* a place the player walked lately, near them but not too, out of the
+players' sight unless seen will do; whether there is one */
+static boolean chasm_spartan_place(
+	real_point3d const *player_position,
+	boolean seen,
+	real_point3d *place)
+{
+	short index;
+
+	for (index = chasm_spartan.crumb_count - 1; index >= 0; index--)
+	{
+		real_point3d const *crumb = &chasm_spartan.crumbs[index];
+		real distance = chasm_distance(crumb, player_position);
+
+		if (distance >= CHASM_CRUMB_NEAREST && distance <= CHASM_CRUMB_FARTHEST && (seen || !chasm_spartan_seen(crumb)))
+		{
+			*place = *crumb;
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+/* his mind, and the squad he joins: the Marines' nearest the place (their
+variant, their encounter and squad), else a Marine variant of the map's,
+on his own (NONE); whether there is one */
+static boolean chasm_spartan_mind(
+	real_point3d const *place,
+	long *variant_index,
+	long *encounter_index,
+	short *squad_index)
+{
+	struct object_iterator iterator;
+	struct tag_iterator tags;
+	real best = CHASM_SPARTAN_JOIN_DISTANCE;
+	long tag_index;
+
+	*variant_index = *encounter_index = NONE;
+	*squad_index = NONE;
+	object_iterator_new(&iterator, _object_mask_biped, 0);
+	while (object_iterator_next(&iterator))
+	{
+		struct unit_datum *unit = (struct unit_datum *)object_get_and_verify_type(iterator.index, _object_mask_unit);
+		struct actor_datum *actor;
+		real distance;
+
+		if (iterator.index == chasm_spartan.unit_index || unit->unit.player_index != NONE ||
+			unit->unit.actor_index == NONE || TEST_FLAG(unit->object.damage_flags, _object_dead_bit) ||
+			game_team_is_enemy(_game_team_player, unit->object.owner_team_index))
+		{
+			continue;
+		}
+		actor = actor_get(unit->unit.actor_index);
+		/* (a Marine's mind, armed: not a crewman's, nor Keyes's) */
+		if (!chasm_contains(tag_get_name(actor->meta.variant_definition_index), "marine") ||
+			actor_variant_definition_get(actor->meta.variant_definition_index)->ranged_combat.reference.index == NONE)
+		{
+			continue;
+		}
+		distance = chasm_distance(&unit->object.position, place);
+		if (distance < best || *variant_index == NONE)
+		{
+			*variant_index = actor->meta.variant_definition_index;
+			if (distance < best && actor->meta.encounter_index != NONE)
+			{
+				best = distance;
+				*encounter_index = DATUM_INDEX_TO_ABSOLUTE_INDEX(actor->meta.encounter_index);
+				*squad_index = actor->meta.squad_index;
+			}
+		}
+	}
+	if (*variant_index != NONE)
+		return TRUE;
+	tag_iterator_new(&tags, ACTOR_VARIANT_DEFINITION_TAG);
+	while ((tag_index = tag_iterator_next(&tags)) != NONE)
+	{
+		struct actor_variant_definition *variant = actor_variant_definition_get(tag_index);
+
+		if (chasm_contains(tag_get_name(tag_index), "marine") && variant->ranged_combat.reference.index != NONE &&
+			variant->actor_reference.index != NONE &&
+			!TEST_FLAG(actor_definition_get(variant->actor_reference.index)->flags, _actor_definition_swarm_actor_bit))
+		{
+			*variant_index = tag_index;
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+/* facing the player */
+static void chasm_spartan_facing(
+	real_point3d const *place,
+	real_point3d const *player_position,
+	real_vector3d *forward)
+{
+	forward->i = player_position->x - place->x;
+	forward->j = player_position->y - place->y;
+	forward->k = 0.0f;
+	if (normalize3d(forward) == 0.0f)
+	{
+		forward->i = 1.0f;
+		forward->j = 0.0f;
+	}
+}
+
+/* he joins the Marines near him (or goes on his own) */
+static void chasm_spartan_join(
+	long actor_index,
+	real_point3d const *place)
+{
+	struct actor_datum *actor = actor_get(actor_index);
+	long variant_index, encounter_index;
+	short squad_index;
+
+	if (!chasm_spartan_mind(place, &variant_index, &encounter_index, &squad_index))
+		encounter_index = NONE;
+	if (encounter_index == NONE ? actor->meta.encounter_index != NONE :
+		actor->meta.encounter_index == NONE ||
+			DATUM_INDEX_TO_ABSOLUTE_INDEX(actor->meta.encounter_index) != encounter_index ||
+			actor->meta.squad_index != squad_index)
+	{
+		actor_change_encounter(actor_index, encounter_index, encounter_index == NONE ? NONE : squad_index);
+		encounters_update_dirty_status();
+	}
+}
+
+static void chasm_spartan_spawn(
+	long player_unit_index,
+	real_point3d const *place)
+{
+	struct object_datum *player = object_get(player_unit_index);
+	struct object_placement_data placement;
+	long variant_index, encounter_index;
+	short squad_index;
+	long unit_index;
+	long actor_index;
+
+	if (!chasm_spartan_mind(place, &variant_index, &encounter_index, &squad_index))
+	{
+		chasm_spartan.mindless = TRUE;
+		platform_log("chasm: no Marine on %s to give the Spartan a mind: he sits this one out",
+			chasm_tag_base_name(global_scenario_index));
+		return;
+	}
+	/* (the players' own biped: the Master Chief's) */
+	object_placement_data_new(&placement, player->definition_index, NONE);
+	placement.position = *place;
+	chasm_spartan_facing(place, &player->object.position, &placement.forward);
+	unit_index = object_new(&placement);
+	if (unit_index == NONE)
+		return;
+	/* (as actor_place: the variant's weapon and grenades, then the mind;
+	2 actor_default_state_alert, 0 actor_default_state_none) */
+	actor_customize_unit(variant_index, unit_index);
+	actor_index = actor_create_for_unit(FALSE, unit_index, variant_index, encounter_index, squad_index, FALSE, NONE,
+		FALSE, 2, 0, NONE, 0);
+	if (actor_index == NONE)
+	{
+		object_delete(unit_index);
+		return;
+	}
+	if (encounter_index != NONE)
+		encounters_update_dirty_status();
+	chasm_spartan.unit_index = unit_index;
+	chasm_spartan.following = TRUE;
+	platform_log("chasm: the Spartan is in (%s, %s)", tag_get_name(variant_index),
+		encounter_index != NONE ? "with the Marines near" : "on his own");
+}
+
+/* the Spartan looked after, twice a second (the host's or a single
+player's): the player's walk kept, he comes in when wanted, and keeps up */
+static void chasm_spartan_update(
+	void)
+{
+	unsigned long now = system_milliseconds();
+	long player_unit_index = chasm_player_unit();
+	struct unit_datum *player;
+	struct unit_datum *spartan;
+	real_point3d place;
+
+	/* (nothing during a cutscene: its players are the script's) */
+	if (now - chasm_spartan.scanned_at < CHASM_SPARTAN_SCAN_MS || !config_boolean("chasm.spartan") ||
+		cinematic_in_progress())
+	{
+		return;
+	}
+	chasm_spartan.scanned_at = now;
+	player = (struct unit_datum *)object_try_and_get_and_verify_type(player_unit_index, _object_mask_unit);
+	if (!player || TEST_FLAG(player->object.damage_flags, _object_dead_bit))
+		return;
+	/* (the player's walk: on foot, on ground the AI walks) */
+	if (player->object.parent_object_index == NONE &&
+		TEST_FLAG(_object_mask_biped, player->object.type) &&
+		biped_approximate_surface_index(player_unit_index, NULL) != NONE &&
+		(!chasm_spartan.crumb_count ||
+			chasm_distance(&chasm_spartan.crumbs[chasm_spartan.crumb_count - 1], &player->object.position) >
+				CHASM_CRUMB_SPACING))
+	{
+		if (chasm_spartan.crumb_count == CHASM_CRUMBS)
+		{
+			memmove(&chasm_spartan.crumbs[0], &chasm_spartan.crumbs[1], sizeof(chasm_spartan.crumbs[0]) * (CHASM_CRUMBS - 1));
+			chasm_spartan.crumb_count--;
+		}
+		chasm_spartan.crumbs[chasm_spartan.crumb_count++] = player->object.position;
+	}
+	if (!chasm_spartan_alive())
+	{
+		if (!chasm_spartan.wanted || chasm_spartan.mindless ||
+			!chasm_spartan_place(&player->object.position, now - chasm_spartan.wanted_since > CHASM_SPARTAN_LATE_MS, &place))
+		{
+			return;
+		}
+		chasm_spartan.wanted = FALSE;
+		chasm_spartan_spawn(player_unit_index, &place);
+		return;
+	}
+	/* keeping up: far from every player, out of their sight, not riding */
+	spartan = (struct unit_datum *)object_get_and_verify_type(chasm_spartan.unit_index, _object_mask_unit);
+	if (!chasm_spartan.following || spartan->object.parent_object_index != NONE ||
+		chasm_nearest_player_distance(&spartan->object.position) <
+			(real)(config_real("chasm.spartan_leash") / CHASM_METERS_PER_WORLD_UNIT) ||
+		chasm_spartan_seen(&spartan->object.position) ||
+		!chasm_spartan_place(&player->object.position, FALSE, &place))
+	{
+		return;
+	}
+	{
+		real_vector3d forward;
+
+		chasm_spartan_facing(&place, &player->object.position, &forward);
+		object_set_position(chasm_spartan.unit_index, &place, &forward, NULL);
+		object_reset(chasm_spartan.unit_index);
+		actor_move_halt(spartan->unit.actor_index);
+		chasm_spartan_join(spartan->unit.actor_index, &place);
+	}
+}
+
+/* the orders the Spartan takes himself (not his squad's); whether it was
+one */
+static boolean chasm_spartan_act(
+	char const *action_id,
+	long unit_index,
+	long actor_index,
+	long player_unit_index)
+{
+	struct unit_datum *unit = (struct unit_datum *)object_get_and_verify_type(unit_index, _object_mask_unit);
+
+	if (!strcmp(action_id, "movement.follow_target") || !strcmp(action_id, "halo.advance"))
+	{
+		chasm_spartan.following = TRUE;
+		chasm_spartan_join(actor_index, &unit->object.position);
+		return TRUE;
+	}
+	if (!strcmp(action_id, "movement.stop_follow_target") || !strcmp(action_id, "ai.wait_here"))
+	{
+		/* (on his own: no squad's firing positions take him off) */
+		chasm_spartan.following = FALSE;
+		actor_change_encounter(actor_index, NONE, NONE);
+		encounters_update_dirty_status();
+		actor_move_halt(actor_index);
+		return TRUE;
+	}
+	if (!strcmp(action_id, "halo.enter_vehicle"))
+	{
+		/* (a gunner's seat, else a passenger's, else any free: in it at once,
+		as the levels' scripts put the Marines in) */
+		long vehicle_index = chasm_nearest_vehicle(player_unit_index);
+		struct unit_definition *definition;
+		char const *wanted[] = { "gunner", "passenger", "" };
+		short pass, seat_index;
+
+		if (vehicle_index == NONE)
+			return FALSE;
+		definition = unit_definition_get(object_get(vehicle_index)->definition_index);
+		for (pass = 0; pass < (short)NUMBEROF(wanted); pass++)
+		{
+			for (seat_index = 0; seat_index < definition->unit.seats.count; seat_index++)
+			{
+				struct unit_seat *seat = TAG_BLOCK_GET_ELEMENT(&definition->unit.seats, seat_index, struct unit_seat);
+
+				if (!unit_seat_filled(vehicle_index, seat_index) && chasm_contains(seat->label, wanted[pass]))
+				{
+					unit_scripting_enter_vehicle(unit_index, vehicle_index, seat->label);
+					if (object_get(unit_index)->object.parent_object_index == vehicle_index)
+						return TRUE;
+				}
+			}
+		}
+		return FALSE;
+	}
+	if (!strcmp(action_id, "halo.exit_vehicle"))
+	{
+		unit_scripting_exit_vehicle(unit_index);
+		return TRUE;
+	}
+	return FALSE;
+}
+
 /* an action the speaker chose, done; whether it was one this knows */
 static boolean chasm_act(
 	char const *action_id,
@@ -901,6 +1311,9 @@ static boolean chasm_act(
 	actor_index = unit->unit.actor_index;
 	if (TEST_FLAG(unit->object.damage_flags, _object_dead_bit) || actor_index == NONE)
 		return FALSE;
+	/* (the Spartan's own orders: he alone, not his squad) */
+	if (unit_index == chasm_spartan.unit_index && chasm_spartan_act(action_id, unit_index, actor_index, player_unit_index))
+		return TRUE;
 	chasm_actor_references(actor_index, &squad, &encounter);
 	if (!strcmp(action_id, "world.give_item"))
 	{
@@ -1964,6 +2377,7 @@ void chasm_bridge_update(
 		return;
 	}
 	/* the host's (or a single player's) */
+	chasm_spartan_update();
 	chasm_client_set_relaying(chasm_coop_host());
 	while (chasm_client_next_event(&event))
 		chasm_handle_event(&event);
@@ -2168,14 +2582,27 @@ void chasm_bridge_game_state_event(
 
 	if (!strcmp(event, "map start") || !strcmp(event, "checkpoint revert"))
 	{
+		/* (the Spartan: in at the next chance, on the player's walk from
+		now) */
+		chasm_spartan.crumb_count = 0;
+		chasm_spartan.wanted = TRUE;
+		chasm_spartan.wanted_since = system_milliseconds();
 		chasm_watch.reset = TRUE;
 		chasm_watch.count = 0;
 	}
 	if (!strcmp(event, "map start"))
 	{
+		chasm_spartan.unit_index = NONE;
+		chasm_spartan.mindless = FALSE;
 		chasm_bridge.said = FALSE;
 		chasm_bridge.reacted = FALSE;
 		chasm_bridge.say_started_at = 0;
+	}
+	/* (the Spartan, dead: back at the checkpoint) */
+	if (!strcmp(event, "checkpoint saved") && !chasm_spartan_alive() && !chasm_spartan.wanted)
+	{
+		chasm_spartan.wanted = TRUE;
+		chasm_spartan.wanted_since = system_milliseconds();
 	}
 	/* (the host's alone: a client's game state is the host's) */
 	if (!config_boolean("chasm.enabled") || !chasm_client_available() || game_engine_running() ||

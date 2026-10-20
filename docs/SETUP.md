@@ -51,7 +51,7 @@ game's maps (~1.5 GB).
 
 chasm clones a character's voice from `profiles/halo-combat-evolved/voices/<Name>/reference.wav`. Give
 each character 10–20 seconds of clean speech from your own copy of the game: Sergeant Johnson,
-Cortana, Captain Keyes, 343 Guilty Spark, Bisenti, Mendoza, Jenkins, Fitzgerald, Chips Dubbo, a
+Cortana, Fred-104 (any calm male voice: he has no lines in the game), Captain Keyes, 343 Guilty Spark, Bisenti, Mendoza, Jenkins, Fitzgerald, Chips Dubbo, a
 Grunt and an Elite. Without a clip, they speak in the TTS engine's default voice.
 
 ## C. Playing together
@@ -79,6 +79,8 @@ Grunt and an Elite. Without a clip, they speak in the TTS engine's default voice
 | `chasm.reactions` | `true` | Characters speak up on their own: a friend killed, Covenant contact, the fight over, shields down, a vehicle, a long quiet. |
 | `chasm.reaction_cooldown` | `20.0` | The fewest seconds between two of their own remarks. Raise it if they're chatty. |
 | `chasm.idle_chatter` | `150.0` | Seconds of quiet before someone may say something. `0` turns it off. |
+| `chasm.spartan` | `true` | Fred-104, a second Spartan, fights beside you. `false` leaves him out. |
+| `chasm.spartan_leash` | `18.0` | How far, in meters, Fred may fall behind before he catches up (out of your sight). |
 | `chasm.microphone_warm` | `true` | Keeps the mic open so your first word isn't cut off. Audio is only recorded while the key is held. |
 
 ## E. Checking it works without the disc in the way

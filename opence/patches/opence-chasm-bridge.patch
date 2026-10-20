@@ -118,7 +118,7 @@ index 01fb4f1..2d644fa 100644
  	limit(output, frames);
  }
 diff --git a/port/linux/src/port_config.c b/port/linux/src/port_config.c
-index 76b16c4..9e30e55 100644
+index 76b16c4..1317d76 100644
 --- a/port/linux/src/port_config.c
 +++ b/port/linux/src/port_config.c
 @@ -359,6 +359,9 @@ static const struct config_setting config_settings[] =
@@ -131,7 +131,7 @@ index 76b16c4..9e30e55 100644
  	{ "controls.chat", _config_string, "\"T\"", "HALO_KEY_CHAT", _environment_value, _platform_all,
  		"Network games' text chat: type a line to everyone (Enter sends it,\n"
  		"Escape lets it go)." },
-@@ -405,6 +408,37 @@ static const struct config_setting config_settings[] =
+@@ -405,6 +408,43 @@ static const struct config_setting config_settings[] =
  	{ "bots.teams", _config_string, "\"even\"", "HALO_BOT_TEAMS", _environment_value, _platform_all,
  		"In team games: \"even\" puts the bots on both teams, evening them with\n"
  		"the players; \"against\" puts them all on the team the players are not on." },
@@ -162,6 +162,12 @@ index 76b16c4..9e30e55 100644
 +	{ "chasm.idle_chatter", _config_real, "150.0", "HALO_CHASM_IDLE_CHATTER", _environment_value, _platform_all,
 +		"After this many seconds with nothing said and no fight, the nearest\n"
 +		"friend may say something; 0 never." },
++	{ "chasm.spartan", _config_boolean, "true", "HALO_CHASM_SPARTAN", _environment_value, _platform_all,
++		"A second Spartan fights beside you in the campaign (Fred-104: the\n"
++		"Master Chief's armor, a Marine's mind), and talks like the rest." },
++	{ "chasm.spartan_leash", _config_real, "18.0", "HALO_CHASM_SPARTAN_LEASH", _environment_value, _platform_all,
++		"How far, in meters, the Spartan may fall behind before he catches\n"
++		"up (out of your sight, on a place you walked)." },
 +	{ "chasm.bridge_folder", _config_string, "\"\"", "HALO_CHASM_BRIDGE_FOLDER", _environment_value, _platform_all,
 +		"The folder chasm finds the game by (its heartbeat, the characters'\n"
 +		"profile, the bridge's settings). Empty: chasm's own, CHASM_BRIDGE_ROOT,\n"
@@ -169,7 +175,7 @@ index 76b16c4..9e30e55 100644
  	{ "display.viewmodel_shield", _config_boolean, "false", "HALO_VIEWMODEL_SHIELD", _environment_value, _platform_all,
  		"The energy shield's flare on the first-person arms too, as on the body\n"
  		"(the stock game draws it on the body only)." },
-@@ -611,9 +645,11 @@ static const struct config_setting config_settings[] =
+@@ -611,9 +651,11 @@ static const struct config_setting config_settings[] =
  		"The Discord application internet play invites go through while the\n"
  		"Discord desktop client runs; empty for none." },
  
@@ -183,7 +189,7 @@ index 76b16c4..9e30e55 100644
  	{ "streamer.enabled", _config_boolean, "false", "HALO_STREAMER_MODE", _environment_value, _platform_all,
  		"Hide offensive words in names and text from other players, maps and mods\n"
  		"as stars, at the levels below (Settings > Network Setup > Streamer Mode)." },
-@@ -741,6 +777,12 @@ static const struct config_setting config_settings[] =
+@@ -741,6 +783,12 @@ static const struct config_setting config_settings[] =
  	{ "debug.voice_test", _config_boolean, "false", "HALO_VOICE_TEST", _environment_set_is_true, _platform_all,
  		"Voice chat's automated tests: a tone instead of the microphone, and\n"
  		"each voice heard logged once a second." },

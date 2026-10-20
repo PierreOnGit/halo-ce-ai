@@ -67,12 +67,15 @@ def main() -> int:
     else:
         opence = (Path.cwd() / "OpenCE").resolve()
         if not opence.exists():
-            print(f"cloning OpenCE {commit[:12]} into {opence}")
-            # (long paths: Windows' 260 characters are too few for some of its files)
-            subprocess.run(["git", "-c", "core.longpaths=true", "clone", "--filter=blob:none", "--no-checkout", UPSTREAM,
-                            str(opence)], check=True)
+            # (that commit alone, shallow; long paths: Windows' 260 characters are too few for some of its files)
+            print(f"fetching OpenCE {commit[:12]} into {opence}")
+            opence.mkdir(parents=True)
+            git("init", "--quiet", cwd=opence)
             git("config", "core.longpaths", "true", cwd=opence)
-        git("checkout", "--quiet", commit, cwd=opence)
+            git("remote", "add", "origin", UPSTREAM, cwd=opence)
+        if git("cat-file", "-e", f"{commit}^{{commit}}", cwd=opence, check=False).returncode != 0:
+            git("fetch", "--quiet", "--depth", "1", "origin", commit, cwd=opence)
+        git("checkout", "--quiet", "--force", commit, cwd=opence)
 
     for name in NEW_FILES:
         target = opence / name

@@ -73,8 +73,14 @@ def main() -> int:
             git("init", "--quiet", cwd=opence)
             git("config", "core.longpaths", "true", cwd=opence)
             git("remote", "add", "origin", UPSTREAM, cwd=opence)
-        if git("cat-file", "-e", f"{commit}^{{commit}}", cwd=opence, check=False).returncode != 0:
-            git("fetch", "--quiet", "--depth", "1", "origin", commit, cwd=opence)
+        # (the commit by its id; where a server will not give one so, main's
+        # history, which holds it)
+        for fetch in (["--depth", "1", "origin", commit], ["--depth", "500", "origin", "main"], ["--unshallow", "origin"]):
+            if git("cat-file", "-e", f"{commit}^{{commit}}", cwd=opence, check=False).returncode == 0:
+                break
+            result = git("fetch", "--quiet", *fetch, cwd=opence, check=False)
+            if result.returncode != 0:
+                print(f"git fetch {' '.join(fetch)}: {result.stderr.strip()}", file=sys.stderr)
         git("checkout", "--quiet", "--force", commit, cwd=opence)
 
     for name in NEW_FILES:

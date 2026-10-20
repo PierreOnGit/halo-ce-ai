@@ -1,0 +1,158 @@
+diff --git a/port/linux/src/dsound_sdl.c b/port/linux/src/dsound_sdl.c
+index 01fb4f1..2d644fa 100644
+--- a/port/linux/src/dsound_sdl.c
++++ b/port/linux/src/dsound_sdl.c
+@@ -49,6 +49,7 @@ skips opening a device; audio.channels chooses stereo or 5.1
+ #include "sdl_platform.h"
+ #include "port_config.h"
+ #include "voice_audio.h"
++#include "chasm_client.h"
+ 
+ #include <SDL3/SDL.h>
+ #include <math.h>
+@@ -1514,8 +1515,8 @@ static void mix(float *output, unsigned long frames)
+ 		if ((!enabled && reverb.level <= 0.0f) || reverb.quiet > REVERB_QUIET_FRAMES)
+ 			reverb_clear();
+ 	}
+-	/* the players' voices (voice_audio.c), dry, under the limiter; on 5.1
+-	from the front pair */
++	/* the players' voices (voice_audio.c) and the characters' (chasm_client.c),
++	dry, under the limiter; on 5.1 from the front pair */
+ 	if (output_channels == 6)
+ 	{
+ 		float voices[MIX_CHUNK_FRAMES * OUTPUT_CHANNELS];
+@@ -1523,6 +1524,7 @@ static void mix(float *output, unsigned long frames)
+ 
+ 		memset(voices, 0, frames * OUTPUT_CHANNELS * sizeof(float));
+ 		voice_audio_mix(voices, frames);
++		chasm_client_mix(voices, frames);
+ 		for (frame = 0; frame < frames; frame++)
+ 		{
+ 			output[frame * 6] += voices[frame * 2];
+@@ -1532,6 +1534,7 @@ static void mix(float *output, unsigned long frames)
+ 	else
+ 	{
+ 		voice_audio_mix(output, frames);
++		chasm_client_mix(output, frames);
+ 	}
+ 	limit(output, frames);
+ }
+diff --git a/port/linux/src/port_config.c b/port/linux/src/port_config.c
+index 76b16c4..fd2d830 100644
+--- a/port/linux/src/port_config.c
++++ b/port/linux/src/port_config.c
+@@ -405,6 +405,27 @@ static const struct config_setting config_settings[] =
+ 	{ "bots.teams", _config_string, "\"even\"", "HALO_BOT_TEAMS", _environment_value, _platform_all,
+ 		"In team games: \"even\" puts the bots on both teams, evening them with\n"
+ 		"the players; \"against\" puts them all on the team the players are not on." },
++	{ "chasm.enabled", _config_boolean, "true", "HALO_CHASM", _environment_value, _platform_all,
++		"Talk to the campaign's characters with your voice (Windows and Linux):\n"
++		"hold controls.push_to_talk and speak, and the marine you look at (or\n"
++		"name: \"Johnson, follow me\"), or Cortana with no one near, answers in\n"
++		"their own voice, and may act on what you said. Needs chasm, the AI\n"
++		"characters' backend (github.com/chasmlol/chasm), running at chasm.url;\n"
++		"without it, push to talk does nothing in the campaign. Never in\n"
++		"network games, whose push to talk is voice chat's." },
++	{ "chasm.url", _config_string, "\"http://127.0.0.1:7341\"", "HALO_CHASM_URL", _environment_value, _platform_all,
++		"Where chasm listens (http:// only), on this machine or another." },
++	{ "chasm.distance", _config_real, "12.0", "HALO_CHASM_DISTANCE", _environment_value, _platform_all,
++		"How near a character must be to be talked to, in meters." },
++	{ "chasm.microphone_warm", _config_boolean, "true", "HALO_CHASM_MICROPHONE_WARM", _environment_value,
++		_platform_all,
++		"Keep the microphone open in the campaign, so that the first word said\n"
++		"with push to talk is not lost while it opens; what it hears is kept\n"
++		"only while push to talk is held. false opens it at each press." },
++	{ "chasm.bridge_folder", _config_string, "\"\"", "HALO_CHASM_BRIDGE_FOLDER", _environment_value, _platform_all,
++		"The folder chasm finds the game by (its heartbeat, the characters'\n"
++		"profile, the bridge's settings). Empty: chasm's own, CHASM_BRIDGE_ROOT,\n"
++		"else %LOCALAPPDATA%\\chasm\\bridge (on Linux, /tmp/chasm/bridge)." },
+ 	{ "display.viewmodel_shield", _config_boolean, "false", "HALO_VIEWMODEL_SHIELD", _environment_value, _platform_all,
+ 		"The energy shield's flare on the first-person arms too, as on the body\n"
+ 		"(the stock game draws it on the body only)." },
+@@ -611,9 +632,11 @@ static const struct config_setting config_settings[] =
+ 		"The Discord application internet play invites go through while the\n"
+ 		"Discord desktop client runs; empty for none." },
+ 
+-	{ "update.auto", _config_boolean, "true", "HALO_UPDATE_AUTO", _environment_value, _platform_all,
++	{ "update.auto", _config_boolean, "false", "HALO_UPDATE_AUTO", _environment_value, _platform_all,
+ 		"Look for a new version when the game starts, and offer to update to it;\n"
+-		"false never looks (the game's \"Do not ask again\" writes false here)." },
++		"false never looks (the game's \"Do not ask again\" writes false here).\n"
++		"false by default in the chasm bridge's builds: OpenCE's releases, which\n"
++		"it would update to, do not have the bridge." },
+ 	{ "streamer.enabled", _config_boolean, "false", "HALO_STREAMER_MODE", _environment_value, _platform_all,
+ 		"Hide offensive words in names and text from other players, maps and mods\n"
+ 		"as stars, at the levels below (Settings > Network Setup > Streamer Mode)." },
+@@ -741,6 +764,9 @@ static const struct config_setting config_settings[] =
+ 	{ "debug.voice_test", _config_boolean, "false", "HALO_VOICE_TEST", _environment_set_is_true, _platform_all,
+ 		"Voice chat's automated tests: a tone instead of the microphone, and\n"
+ 		"each voice heard logged once a second." },
++	{ "debug.chasm_say", _config_string, "\"\"", "HALO_CHASM_SAY", _environment_value, _platform_all,
++		"The chasm bridge's automated tests: these words said, as if heard, two\n"
++		"seconds into each map (port/linux/game/chasm_bridge.c)." },
+ 	{ "debug.null_renderer", _config_boolean, "false", "HALO_NULL_RENDERER", _environment_set_is_true, _platform_all,
+ 		"Run without a window, drawing nothing." },
+ 	{ "debug.gl_debug", _config_boolean, "false", "HALO_GL_DEBUG", _environment_set_is_true, _platform_all,
+diff --git a/source/interface/hud.c b/source/interface/hud.c
+index bb7aa63..f40f548 100644
+--- a/source/interface/hud.c
++++ b/source/interface/hud.c
+@@ -110,6 +110,7 @@ symbols in this file:
+ #include "coop_spectate.h" /* port: port/linux/game/coop_spectate.c */
+ #include "network_coop.h" /* port: port/linux/game/network_coop.c */
+ #include "network_chat.h" /* port: port/linux/game/network_chat.c */
++#include "chasm_bridge.h" /* port: port/linux/game/chasm_bridge.c */
+ #include "text/font_group.h"
+ #include "text/text_group.h"
+ #include "units/unit_definitions.h"
+@@ -1525,6 +1526,8 @@ void hud_draw_screen(
+ 		hud_messaging_update(render.local_player_index);
+ 		/* port: network games' text chat, the lines this view's player hears */
+ 		network_chat_draw(render.local_player_index);
++		/* port: the campaign's characters' subtitles (port/linux/game/chasm_bridge.c) */
++		chasm_bridge_draw(render.local_player_index);
+ 	}
+ 
+ 	rasterizer_hud_end();
+diff --git a/source/main/main.c b/source/main/main.c
+index 5dff1a1..3338602 100644
+--- a/source/main/main.c
++++ b/source/main/main.c
+@@ -382,6 +382,7 @@ symbols in this file:
+ #include "network_coop.h" /* port: port/linux/game/network_coop.c */
+ #include "network_voice.h" /* port: port/linux/game/network_voice.c */
+ #include "network_chat.h" /* port: port/linux/game/network_chat.c */
++#include "chasm_bridge.h" /* port: port/linux/game/chasm_bridge.c */
+ #include "network_aim_assist.h" /* port: port/linux/game/network_aim_assist.c */
+ #include "map_share.h" /* port: port/linux/game/map_share.c */
+ #include "profile_sections.h" /* port: port/linux/include/profile_sections.h */
+@@ -3563,6 +3564,8 @@ static boolean main_loop_iteration(
+ 			map_share_update();
+ 			/* port: network games' text chat (port/linux/game/network_chat.c) */
+ 			network_chat_update();
++			/* port: the campaign's characters talked to (port/linux/game/chasm_bridge.c) */
++			chasm_bridge_update();
+ 			profile_scope_enter(main_network_start_frame_section)
+ 			connection = main_globals.connection;
+ 			if (connection==_game_connection_network_client)
+diff --git a/source/saved games/game_state.c b/source/saved games/game_state.c
+index c5951b7..c206c82 100644
+--- a/source/saved games/game_state.c	
++++ b/source/saved games/game_state.c	
+@@ -101,6 +101,7 @@ symbols in this file:
+ #include "console.h"
+ #include "game_state.h"
+ #include "coop_vehicles.h" /* port: preserve replacement-vehicle homes across reverts */
++#include "chasm_bridge.h" /* port: port/linux/game/chasm_bridge.c */
+ #include "game.h"
+ #include "tag_files.h"
+ #include "cache_files.h"
+@@ -284,6 +285,8 @@ static void game_state_note_event(
+ {
+ 	game_state_last_event = event;
+ 	game_state_last_event_time = game_time_initialized() ? game_time_get() : NONE;
++	/* port: the characters' memories saved and put back with the game */
++	chasm_bridge_game_state_event(event);
+ }
+ 
+ static void game_state_data_arrays_new_map(void);

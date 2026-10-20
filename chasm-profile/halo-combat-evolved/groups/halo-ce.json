@@ -1,0 +1,31 @@
+{
+  "id": "halo-ce",
+  "name": "Halo: Combat Evolved",
+  "members": [
+    "Cortana.png",
+    "343 Guilty Spark.png",
+    "Sergeant Johnson.png",
+    "Captain Keyes.png",
+    "Bisenti.png",
+    "Mendoza.png",
+    "Jenkins.png",
+    "Fitzgerald.png",
+    "Chips Dubbo.png",
+    "Marine.png",
+    "Crewman.png",
+    "Grunt.png",
+    "Elite.png",
+    "Jackal.png",
+    "Hunter.png"
+  ],
+  "avatar_url": null,
+  "allow_self_responses": false,
+  "activation_strategy": 0,
+  "generation_mode": 0,
+  "disabled_members": [],
+  "fav": false,
+  "chat_id": "halo-ce",
+  "chats": [
+    "halo-ce"
+  ]
+}

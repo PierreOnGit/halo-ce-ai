@@ -1,0 +1,3 @@
+#ifndef HARNESS_SDL_PLATFORM_H
+#define HARNESS_SDL_PLATFORM_H
+#endif

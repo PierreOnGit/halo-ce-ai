@@ -1,0 +1,55 @@
+{
+  "id": "halo-combat-evolved",
+  "name": "Halo: Combat Evolved",
+  "description": "The campaign's characters for OpenCE (the Halo: Combat Evolved decompilation's port): Cortana, Sergeant Johnson, Captain Keyes, the Pillar of Autumn's Marines and crew, and the Covenant, as character cards; a lorebook of the setting; and the action book of what they can do in the game.",
+  "bundleVersion": 3,
+  "game": "halo-combat-evolved",
+  "comment": "Authored content only. No chats, memories or voices are bundled; those are each player's own.",
+  "characters": [
+    {
+      "name": "Cortana"
+    },
+    {
+      "name": "343 Guilty Spark"
+    },
+    {
+      "name": "Sergeant Johnson"
+    },
+    {
+      "name": "Captain Keyes"
+    },
+    {
+      "name": "Bisenti"
+    },
+    {
+      "name": "Mendoza"
+    },
+    {
+      "name": "Jenkins"
+    },
+    {
+      "name": "Fitzgerald"
+    },
+    {
+      "name": "Chips Dubbo"
+    },
+    {
+      "name": "Marine"
+    },
+    {
+      "name": "Crewman"
+    },
+    {
+      "name": "Grunt"
+    },
+    {
+      "name": "Elite"
+    },
+    {
+      "name": "Jackal"
+    },
+    {
+      "name": "Hunter"
+    }
+  ]
+}

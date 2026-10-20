@@ -1,0 +1,848 @@
+{
+  "id": "Halo Combat Evolved Action Book",
+  "name": "Halo: Combat Evolved Action Book",
+  "description": "What the campaign's characters can do when spoken to, as OpenCE's chasm bridge does it: orders to the speaker's squad (follow, hold, advance, charge, board or leave a vehicle), handing over a weapon, and turning on the player or standing down.",
+  "settings": {
+    "targetGame": "halo-combat-evolved",
+    "llmMayUseCommandTemplates": false,
+    "runtimeRequiresAllowlist": true
+  },
+  "extensions": {
+    "chasm": {
+      "type": "action-book",
+      "version": 1
+    }
+  },
+  "binding": {
+    "engine": "opence:chasm_bridge",
+    "adapter": "opence",
+    "executor": "chasm_bridge.c chasm_act",
+    "protocol": "chasm.action-book.execution.v1",
+    "version": 1
+  },
+  "entries": {
+    "0": {
+      "uid": 0,
+      "key": [],
+      "keysecondary": [],
+      "comment": "Find an action",
+      "content": "QUERY: the way you reach every other action. Set target to a plain description of what you are trying to do ('follow the player', 'hold this position', 'get in the vehicle', 'charge the enemy') and you get back the real actions that match, with their exact verbs. Then emit one of those. No action is available until you find it here first.",
+      "constant": false,
+      "vectorized": false,
+      "selective": false,
+      "order": 100,
+      "position": 0,
+      "disable": false,
+      "actionId": "chasm.find_action",
+      "alias": "find_action",
+      "riskTier": "low",
+      "targetGame": "halo-combat-evolved",
+      "parametersSchema": {},
+      "scopes": [
+        "global",
+        "admin",
+        "godmode",
+        "game:halo-combat-evolved",
+        "game:halo_combat_evolved"
+      ],
+      "tags": [
+        "query"
+      ],
+      "binding": {
+        "engine": "chasm:query"
+      },
+      "execution": {},
+      "extensions": {}
+    },
+    "1": {
+      "uid": 1,
+      "key": [
+        "follow",
+        "follow me",
+        "on me",
+        "with me",
+        "come with",
+        "let's go",
+        "lets go",
+        "regroup",
+        "form up",
+        "move out"
+      ],
+      "keysecondary": [],
+      "comment": "Follow the Master Chief",
+      "content": "The speaker's squad follows the player. Set target to 'player'.",
+      "constant": false,
+      "vectorized": true,
+      "selective": false,
+      "order": 201,
+      "position": 0,
+      "disable": false,
+      "probability": 100,
+      "useProbability": true,
+      "depth": 4,
+      "group": "",
+      "actionId": "movement.follow_target",
+      "alias": "follow",
+      "riskTier": "low",
+      "targetGame": "halo-combat-evolved",
+      "pluginSource": "OpenCE chasm bridge (port/linux/game/chasm_bridge.c)",
+      "parametersSchema": {
+        "confidence": "number 0..1",
+        "target": "player"
+      },
+      "preconditions": [
+        "the speaker is a living character near the player"
+      ],
+      "effects": [
+        "the speaker's squad follows the player"
+      ],
+      "vectorSearchTexts": [
+        "follow me",
+        "on me marines",
+        "come with me",
+        "let's go",
+        "stay with me",
+        "form up on me",
+        "move out with me"
+      ],
+      "vectorizableText": "follow me on me marines come with me let's go stay with me form up on me move out with me",
+      "scopes": [
+        "global",
+        "admin",
+        "godmode",
+        "game:halo-combat-evolved",
+        "game:halo_combat_evolved"
+      ],
+      "tags": [
+        "halo",
+        "native-supported"
+      ],
+      "binding": {
+        "engine": "fallout-new-vegas:xnvse"
+      },
+      "execution": {
+        "templateId": "movement.follow_target",
+        "language": "opence/chasm_bridge",
+        "arguments": [
+          "actor",
+          "player"
+        ],
+        "script": "chasm_act movement.follow_target"
+      },
+      "extensions": {}
+    },
+    "2": {
+      "uid": 2,
+      "key": [
+        "stop following",
+        "stay back",
+        "don't follow",
+        "dont follow",
+        "fall back"
+      ],
+      "keysecondary": [],
+      "comment": "Stop following",
+      "content": "The speaker's squad stops following the player. Set target to 'player'.",
+      "constant": false,
+      "vectorized": true,
+      "selective": false,
+      "order": 202,
+      "position": 0,
+      "disable": false,
+      "probability": 100,
+      "useProbability": true,
+      "depth": 4,
+      "group": "",
+      "actionId": "movement.stop_follow_target",
+      "alias": "stop following",
+      "riskTier": "low",
+      "targetGame": "halo-combat-evolved",
+      "pluginSource": "OpenCE chasm bridge (port/linux/game/chasm_bridge.c)",
+      "parametersSchema": {
+        "confidence": "number 0..1",
+        "target": "player"
+      },
+      "preconditions": [
+        "the speaker is a living character near the player"
+      ],
+      "effects": [
+        "the speaker's squad stops following the player"
+      ],
+      "vectorSearchTexts": [
+        "stop following me",
+        "stay back",
+        "don't follow me",
+        "you can stop following"
+      ],
+      "vectorizableText": "stop following me stay back don't follow me you can stop following",
+      "scopes": [
+        "global",
+        "admin",
+        "godmode",
+        "game:halo-combat-evolved",
+        "game:halo_combat_evolved"
+      ],
+      "tags": [
+        "halo",
+        "native-supported"
+      ],
+      "binding": {
+        "engine": "fallout-new-vegas:xnvse"
+      },
+      "execution": {
+        "templateId": "movement.stop_follow_target",
+        "language": "opence/chasm_bridge",
+        "arguments": [
+          "actor",
+          "player"
+        ],
+        "script": "chasm_act movement.stop_follow_target"
+      },
+      "extensions": {}
+    },
+    "3": {
+      "uid": 3,
+      "key": [
+        "hold",
+        "hold position",
+        "stay here",
+        "wait here",
+        "guard",
+        "dig in",
+        "cover",
+        "defend",
+        "stay put"
+      ],
+      "keysecondary": [],
+      "comment": "Hold position",
+      "content": "The speaker's squad holds and defends where it is.",
+      "constant": false,
+      "vectorized": true,
+      "selective": false,
+      "order": 203,
+      "position": 0,
+      "disable": false,
+      "probability": 100,
+      "useProbability": true,
+      "depth": 4,
+      "group": "",
+      "actionId": "ai.wait_here",
+      "alias": "hold",
+      "riskTier": "low",
+      "targetGame": "halo-combat-evolved",
+      "pluginSource": "OpenCE chasm bridge (port/linux/game/chasm_bridge.c)",
+      "parametersSchema": {
+        "confidence": "number 0..1"
+      },
+      "preconditions": [
+        "the speaker is a living character near the player"
+      ],
+      "effects": [
+        "the speaker's squad stops following and defends its position"
+      ],
+      "vectorSearchTexts": [
+        "hold this position",
+        "stay here",
+        "wait here",
+        "dig in",
+        "defend this area",
+        "cover me from here"
+      ],
+      "vectorizableText": "hold this position stay here wait here dig in defend this area cover me from here",
+      "scopes": [
+        "global",
+        "admin",
+        "godmode",
+        "game:halo-combat-evolved",
+        "game:halo_combat_evolved"
+      ],
+      "tags": [
+        "halo",
+        "native-supported"
+      ],
+      "binding": {
+        "engine": "fallout-new-vegas:xnvse"
+      },
+      "execution": {
+        "templateId": "ai.wait_here",
+        "language": "opence/chasm_bridge",
+        "arguments": [
+          "actor",
+          "player"
+        ],
+        "script": "chasm_act ai.wait_here"
+      },
+      "extensions": {}
+    },
+    "4": {
+      "uid": 4,
+      "key": [
+        "advance",
+        "push",
+        "move up",
+        "attack",
+        "take them out",
+        "go get them",
+        "flank",
+        "clear"
+      ],
+      "keysecondary": [],
+      "comment": "Advance and attack",
+      "content": "The speaker's squad pushes forward and attacks the enemy.",
+      "constant": false,
+      "vectorized": true,
+      "selective": false,
+      "order": 204,
+      "position": 0,
+      "disable": false,
+      "probability": 100,
+      "useProbability": true,
+      "depth": 4,
+      "group": "",
+      "actionId": "halo.advance",
+      "alias": "advance",
+      "riskTier": "medium",
+      "targetGame": "halo-combat-evolved",
+      "pluginSource": "OpenCE chasm bridge (port/linux/game/chasm_bridge.c)",
+      "parametersSchema": {
+        "confidence": "number 0..1"
+      },
+      "preconditions": [
+        "the speaker is a living character near the player"
+      ],
+      "effects": [
+        "the speaker's squad leaves cover and attacks"
+      ],
+      "vectorSearchTexts": [
+        "push forward",
+        "move up",
+        "attack them",
+        "take them out",
+        "go on the offensive",
+        "clear the area"
+      ],
+      "vectorizableText": "push forward move up attack them take them out go on the offensive clear the area",
+      "scopes": [
+        "global",
+        "admin",
+        "godmode",
+        "game:halo-combat-evolved",
+        "game:halo_combat_evolved"
+      ],
+      "tags": [
+        "halo",
+        "native-supported"
+      ],
+      "binding": {
+        "engine": "fallout-new-vegas:xnvse"
+      },
+      "execution": {
+        "templateId": "halo.advance",
+        "language": "opence/chasm_bridge",
+        "arguments": [
+          "actor",
+          "player"
+        ],
+        "script": "chasm_act halo.advance"
+      },
+      "extensions": {}
+    },
+    "5": {
+      "uid": 5,
+      "key": [
+        "charge",
+        "rush",
+        "berserk",
+        "all out",
+        "go crazy",
+        "kill them all"
+      ],
+      "keysecondary": [],
+      "comment": "Charge recklessly",
+      "content": "The speaker's squad charges the enemy recklessly, all caution gone.",
+      "constant": false,
+      "vectorized": true,
+      "selective": false,
+      "order": 205,
+      "position": 0,
+      "disable": false,
+      "probability": 100,
+      "useProbability": true,
+      "depth": 4,
+      "group": "",
+      "actionId": "halo.berserk",
+      "alias": "charge",
+      "riskTier": "high",
+      "targetGame": "halo-combat-evolved",
+      "pluginSource": "OpenCE chasm bridge (port/linux/game/chasm_bridge.c)",
+      "parametersSchema": {
+        "confidence": "number 0..1"
+      },
+      "preconditions": [
+        "the speaker is a living character near the player"
+      ],
+      "effects": [
+        "the speaker's squad charges the nearest enemy"
+      ],
+      "vectorSearchTexts": [
+        "charge them",
+        "rush them",
+        "go berserk",
+        "all out attack"
+      ],
+      "vectorizableText": "charge them rush them go berserk all out attack",
+      "scopes": [
+        "global",
+        "admin",
+        "godmode",
+        "game:halo-combat-evolved",
+        "game:halo_combat_evolved"
+      ],
+      "tags": [
+        "halo",
+        "native-supported"
+      ],
+      "binding": {
+        "engine": "fallout-new-vegas:xnvse"
+      },
+      "execution": {
+        "templateId": "halo.berserk",
+        "language": "opence/chasm_bridge",
+        "arguments": [
+          "actor",
+          "player"
+        ],
+        "script": "chasm_act halo.berserk"
+      },
+      "extensions": {}
+    },
+    "6": {
+      "uid": 6,
+      "key": [
+        "get in",
+        "hop in",
+        "mount up",
+        "warthog",
+        "jeep",
+        "tank",
+        "scorpion",
+        "gunner",
+        "ride",
+        "vehicle"
+      ],
+      "keysecondary": [],
+      "comment": "Get in the vehicle",
+      "content": "The speaker's squad boards the vehicle nearest the player.",
+      "constant": false,
+      "vectorized": true,
+      "selective": false,
+      "order": 206,
+      "position": 0,
+      "disable": false,
+      "probability": 100,
+      "useProbability": true,
+      "depth": 4,
+      "group": "",
+      "actionId": "halo.enter_vehicle",
+      "alias": "board",
+      "riskTier": "low",
+      "targetGame": "halo-combat-evolved",
+      "pluginSource": "OpenCE chasm bridge (port/linux/game/chasm_bridge.c)",
+      "parametersSchema": {
+        "confidence": "number 0..1"
+      },
+      "preconditions": [
+        "the speaker is a living character near the player"
+      ],
+      "effects": [
+        "the speaker's squad goes to the nearest vehicle and boards it"
+      ],
+      "vectorSearchTexts": [
+        "get in the warthog",
+        "hop in",
+        "mount up",
+        "get on the gun",
+        "take the gunner seat",
+        "get in the vehicle"
+      ],
+      "vectorizableText": "get in the warthog hop in mount up get on the gun take the gunner seat get in the vehicle",
+      "scopes": [
+        "global",
+        "admin",
+        "godmode",
+        "game:halo-combat-evolved",
+        "game:halo_combat_evolved"
+      ],
+      "tags": [
+        "halo",
+        "native-supported"
+      ],
+      "binding": {
+        "engine": "fallout-new-vegas:xnvse"
+      },
+      "execution": {
+        "templateId": "halo.enter_vehicle",
+        "language": "opence/chasm_bridge",
+        "arguments": [
+          "actor",
+          "player"
+        ],
+        "script": "chasm_act halo.enter_vehicle"
+      },
+      "extensions": {}
+    },
+    "7": {
+      "uid": 7,
+      "key": [
+        "get out",
+        "dismount",
+        "bail",
+        "out of the vehicle",
+        "hop out"
+      ],
+      "keysecondary": [],
+      "comment": "Get out of the vehicle",
+      "content": "The speaker's squad gets out of its vehicle.",
+      "constant": false,
+      "vectorized": true,
+      "selective": false,
+      "order": 207,
+      "position": 0,
+      "disable": false,
+      "probability": 100,
+      "useProbability": true,
+      "depth": 4,
+      "group": "",
+      "actionId": "halo.exit_vehicle",
+      "alias": "dismount",
+      "riskTier": "low",
+      "targetGame": "halo-combat-evolved",
+      "pluginSource": "OpenCE chasm bridge (port/linux/game/chasm_bridge.c)",
+      "parametersSchema": {
+        "confidence": "number 0..1"
+      },
+      "preconditions": [
+        "the speaker is a living character near the player"
+      ],
+      "effects": [
+        "the speaker's squad leaves its vehicle"
+      ],
+      "vectorSearchTexts": [
+        "get out of the vehicle",
+        "dismount",
+        "everybody out",
+        "hop out"
+      ],
+      "vectorizableText": "get out of the vehicle dismount everybody out hop out",
+      "scopes": [
+        "global",
+        "admin",
+        "godmode",
+        "game:halo-combat-evolved",
+        "game:halo_combat_evolved"
+      ],
+      "tags": [
+        "halo",
+        "native-supported"
+      ],
+      "binding": {
+        "engine": "fallout-new-vegas:xnvse"
+      },
+      "execution": {
+        "templateId": "halo.exit_vehicle",
+        "language": "opence/chasm_bridge",
+        "arguments": [
+          "actor",
+          "player"
+        ],
+        "script": "chasm_act halo.exit_vehicle"
+      },
+      "extensions": {}
+    },
+    "8": {
+      "uid": 8,
+      "key": [
+        "give me",
+        "hand me",
+        "toss me",
+        "your weapon",
+        "your gun",
+        "your rifle",
+        "swap",
+        "trade"
+      ],
+      "keysecondary": [],
+      "comment": "Hand over the weapon",
+      "content": "The speaker drops the weapon in their hands for the player to pick up.",
+      "constant": false,
+      "vectorized": true,
+      "selective": false,
+      "order": 208,
+      "position": 0,
+      "disable": false,
+      "probability": 100,
+      "useProbability": true,
+      "depth": 4,
+      "group": "",
+      "actionId": "world.give_item",
+      "alias": "give weapon",
+      "riskTier": "medium",
+      "targetGame": "halo-combat-evolved",
+      "pluginSource": "OpenCE chasm bridge (port/linux/game/chasm_bridge.c)",
+      "parametersSchema": {
+        "confidence": "number 0..1"
+      },
+      "preconditions": [
+        "the speaker is a living character near the player"
+      ],
+      "effects": [
+        "the speaker drops their weapon"
+      ],
+      "vectorSearchTexts": [
+        "give me your weapon",
+        "hand me your gun",
+        "let me have your rifle",
+        "toss me that"
+      ],
+      "vectorizableText": "give me your weapon hand me your gun let me have your rifle toss me that",
+      "scopes": [
+        "global",
+        "admin",
+        "godmode",
+        "game:halo-combat-evolved",
+        "game:halo_combat_evolved"
+      ],
+      "tags": [
+        "halo",
+        "native-supported"
+      ],
+      "binding": {
+        "engine": "fallout-new-vegas:xnvse"
+      },
+      "execution": {
+        "templateId": "world.give_item",
+        "language": "opence/chasm_bridge",
+        "arguments": [
+          "actor",
+          "player"
+        ],
+        "script": "chasm_act world.give_item"
+      },
+      "extensions": {}
+    },
+    "9": {
+      "uid": 9,
+      "key": [
+        "traitor",
+        "betray",
+        "fight me",
+        "attack me",
+        "shoot me",
+        "kill me",
+        "die"
+      ],
+      "keysecondary": [],
+      "comment": "Turn on the player",
+      "content": "The speaker turns hostile and attacks the player. Only for real betrayal or provocation (the player attacked them or their friends). Set target to 'player'.",
+      "constant": false,
+      "vectorized": true,
+      "selective": false,
+      "order": 209,
+      "position": 0,
+      "disable": false,
+      "probability": 100,
+      "useProbability": true,
+      "depth": 4,
+      "group": "",
+      "actionId": "combat.start",
+      "alias": "attack",
+      "riskTier": "high",
+      "targetGame": "halo-combat-evolved",
+      "pluginSource": "OpenCE chasm bridge (port/linux/game/chasm_bridge.c)",
+      "parametersSchema": {
+        "confidence": "number 0..1",
+        "target": "player"
+      },
+      "preconditions": [
+        "the speaker is a living character near the player"
+      ],
+      "effects": [
+        "the speaker becomes an enemy of the player and attacks"
+      ],
+      "vectorSearchTexts": [
+        "fight me",
+        "you want a piece of me",
+        "I'll kill you",
+        "attack me then"
+      ],
+      "vectorizableText": "fight me you want a piece of me I'll kill you attack me then",
+      "scopes": [
+        "global",
+        "admin",
+        "godmode",
+        "game:halo-combat-evolved",
+        "game:halo_combat_evolved"
+      ],
+      "tags": [
+        "halo",
+        "native-supported"
+      ],
+      "binding": {
+        "engine": "fallout-new-vegas:xnvse"
+      },
+      "execution": {
+        "templateId": "combat.start",
+        "language": "opence/chasm_bridge",
+        "arguments": [
+          "actor",
+          "player"
+        ],
+        "script": "chasm_act combat.start"
+      },
+      "extensions": {},
+      "verbs": [
+        "kill",
+        "shoot",
+        "fight",
+        "attack"
+      ]
+    },
+    "10": {
+      "uid": 10,
+      "key": [
+        "stand down",
+        "cease fire",
+        "truce",
+        "surrender",
+        "peace",
+        "defect",
+        "join us",
+        "stop fighting"
+      ],
+      "keysecondary": [],
+      "comment": "Stand down",
+      "content": "The speaker stops fighting and becomes the player's ally (a Covenant soldier defects).",
+      "constant": false,
+      "vectorized": true,
+      "selective": false,
+      "order": 210,
+      "position": 0,
+      "disable": false,
+      "probability": 100,
+      "useProbability": true,
+      "depth": 4,
+      "group": "",
+      "actionId": "combat.stop",
+      "alias": "truce",
+      "riskTier": "high",
+      "targetGame": "halo-combat-evolved",
+      "pluginSource": "OpenCE chasm bridge (port/linux/game/chasm_bridge.c)",
+      "parametersSchema": {
+        "confidence": "number 0..1"
+      },
+      "preconditions": [
+        "the speaker is a living character near the player"
+      ],
+      "effects": [
+        "the speaker joins the player's side"
+      ],
+      "vectorSearchTexts": [
+        "stand down",
+        "cease fire",
+        "let's call a truce",
+        "join our side",
+        "surrender and you live"
+      ],
+      "vectorizableText": "stand down cease fire let's call a truce join our side surrender and you live",
+      "scopes": [
+        "global",
+        "admin",
+        "godmode",
+        "game:halo-combat-evolved",
+        "game:halo_combat_evolved"
+      ],
+      "tags": [
+        "halo",
+        "native-supported"
+      ],
+      "binding": {
+        "engine": "fallout-new-vegas:xnvse"
+      },
+      "execution": {
+        "templateId": "combat.stop",
+        "language": "opence/chasm_bridge",
+        "arguments": [
+          "actor",
+          "player"
+        ],
+        "script": "chasm_act combat.stop"
+      },
+      "extensions": {}
+    },
+    "11": {
+      "uid": 11,
+      "key": [
+        "look at me",
+        "eyes on me",
+        "over here"
+      ],
+      "keysecondary": [],
+      "comment": "Look at the player",
+      "content": "The speaker turns to look at the player.",
+      "constant": false,
+      "vectorized": true,
+      "selective": false,
+      "order": 211,
+      "position": 0,
+      "disable": false,
+      "probability": 100,
+      "useProbability": true,
+      "depth": 4,
+      "group": "",
+      "actionId": "npc.look_at_player",
+      "alias": "look",
+      "riskTier": "low",
+      "targetGame": "halo-combat-evolved",
+      "pluginSource": "OpenCE chasm bridge (port/linux/game/chasm_bridge.c)",
+      "parametersSchema": {
+        "confidence": "number 0..1"
+      },
+      "preconditions": [
+        "the speaker is a living character near the player"
+      ],
+      "effects": [
+        "the speaker looks at the player"
+      ],
+      "vectorSearchTexts": [
+        "look at me",
+        "eyes on me",
+        "look over here"
+      ],
+      "vectorizableText": "look at me eyes on me look over here",
+      "scopes": [
+        "global",
+        "admin",
+        "godmode",
+        "game:halo-combat-evolved",
+        "game:halo_combat_evolved"
+      ],
+      "tags": [
+        "halo",
+        "native-supported"
+      ],
+      "binding": {
+        "engine": "fallout-new-vegas:xnvse"
+      },
+      "execution": {
+        "templateId": "npc.look_at_player",
+        "language": "opence/chasm_bridge",
+        "arguments": [
+          "actor",
+          "player"
+        ],
+        "script": "chasm_act npc.look_at_player"
+      },
+      "extensions": {}
+    }
+  }
+}

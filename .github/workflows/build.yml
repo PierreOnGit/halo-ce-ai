@@ -1,0 +1,202 @@
+name: Build
+
+# OpenCE (opence/OPENCE_COMMIT) with the chasm bridge applied
+# (tools/apply_to_opence.py), built for Linux and Windows as OpenCE's own CI
+# builds it (its tools/ci_build.py), with chasm-profile/ beside the
+# executable; and the bridge tested end to end against a real chasm backend
+# (tests/CHASM_COMMIT) whose models are tests/fake_providers.py.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  profile:
+    # chasm-profile/ is what tools/build_profile.py writes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: The profile is up to date
+        run: python3 tools/build_profile.py --check
+
+  linux:
+    # as OpenCE's: Arch Linux has clang, lld, 32-bit glibc and what the
+    # portable build's SDL 3 needs as packages
+    runs-on: ubuntu-24.04
+    container: archlinux:latest
+    timeout-minutes: 40
+    steps:
+      - name: Install the toolchain
+        run: |
+          printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> /etc/pacman.conf
+          pacman -Syu --noconfirm --needed git zstd python python-pytest ninja \
+            clang lld gcc lib32-glibc lib32-gcc-libs cmake pkgconf wayland
+
+      - uses: actions/checkout@v4
+
+      - name: OpenCE with the bridge
+        run: |
+          git config --global --add safe.directory '*'
+          python tools/apply_to_opence.py
+
+      - uses: actions/cache@v4
+        with:
+          path: OpenCE/build/linux/third_party
+          key: linux-third-party-${{ hashFiles('opence/OPENCE_COMMIT') }}
+
+      - name: Release
+        working-directory: OpenCE
+        run: python tools/ci_build.py linux release
+
+      # (the game with the bridge, on OpenCE's staged maps: it runs, every
+      # scenario plays as before)
+      - name: StageKit
+        working-directory: OpenCE
+        run: python -m pytest -q tools/stagekit/tests
+
+      - name: The profile beside the game
+        run: cp -r chasm-profile OpenCE/dist/halo-linux-release/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: halo-ce-ai-linux
+          path: OpenCE/dist/halo-linux-release
+          retention-days: 14
+
+  windows:
+    # as OpenCE's: the runner image has LLVM, Python and Visual Studio's x86
+    # libraries and Windows SDK
+    runs-on: windows-2025
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Install the toolchain
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -OutFile ninja.zip https://github.com/ninja-build/ninja/releases/download/v1.12.1/ninja-win.zip
+          if ((Get-FileHash ninja.zip -Algorithm SHA256).Hash -ne "F550FEC705B6D6FF58F2DB3C374C2277A37691678D6ABA463ADCBB129108467A") { throw "ninja.zip: unexpected SHA-256" }
+          Expand-Archive ninja.zip -DestinationPath "$env:RUNNER_TEMP\tools"
+          Remove-Item ninja.zip
+          "$env:RUNNER_TEMP\tools" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+
+      - uses: actions/checkout@v4
+
+      - name: OpenCE with the bridge
+        run: python tools/apply_to_opence.py
+
+      - uses: actions/cache@v4
+        with:
+          path: OpenCE/build/windows/third_party
+          key: windows-third-party-${{ hashFiles('opence/OPENCE_COMMIT') }}
+
+      - name: Release
+        working-directory: OpenCE
+        run: python tools/ci_build.py windows release
+
+      - name: The profile beside the game
+        run: cp -r chasm-profile OpenCE/dist/halo-windows-release/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: halo-ce-ai-windows
+          path: OpenCE/dist/halo-windows-release
+          retention-days: 14
+
+  e2e:
+    # tests/run_e2e.py: the bridge's client, and the game itself on a
+    # StageKit map, against a real chasm (built from tests/CHASM_COMMIT)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      SDL_VERSION: "3.4.16"
+      ONNXRUNTIME_VERSION: "1.24.2"
+    steps:
+      - name: Install the toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-multilib clang ninja-build cmake python3-pytest
+          rustup toolchain install stable --profile minimal
+
+      - uses: actions/checkout@v4
+
+      # a 32-bit SDL 3 (for the harness and the game; the distribution has
+      # none): what the tests need of it only, no window or sound devices
+      - uses: actions/cache@v4
+        id: sdl
+        with:
+          path: ~/sdl3-i386
+          key: sdl3-i386-${{ env.SDL_VERSION }}
+      - name: SDL 3, 32-bit
+        if: steps.sdl.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL -o sdl.tar.gz "https://github.com/libsdl-org/SDL/releases/download/release-$SDL_VERSION/SDL3-$SDL_VERSION.tar.gz"
+          tar xzf sdl.tar.gz
+          cmake -S "SDL3-$SDL_VERSION" -B sdl-build -G Ninja -DSDL_UNIX_CONSOLE_BUILD=ON \
+            -DCMAKE_C_COMPILER=clang -DCMAKE_C_FLAGS=-m32 -DCMAKE_BUILD_TYPE=Release \
+            -DSDL_SHARED=ON -DSDL_STATIC=OFF -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF \
+            -DSDL_X11=OFF -DSDL_WAYLAND=OFF -DSDL_KMSDRM=OFF -DSDL_OPENGL=OFF -DSDL_OPENGLES=OFF \
+            -DSDL_VULKAN=OFF -DSDL_PULSEAUDIO=OFF -DSDL_PIPEWIRE=OFF -DSDL_ALSA=OFF -DSDL_JACK=OFF \
+            -DSDL_SNDIO=OFF -DSDL_IBUS=OFF -DSDL_HIDAPI_LIBUSB=OFF -DSDL_LIBUDEV=OFF -DSDL_DBUS=OFF \
+            -DCMAKE_INSTALL_PREFIX="$HOME/sdl3-i386"
+          ninja -C sdl-build install
+      - name: SDL 3 where clang -m32 finds it
+        run: |
+          sudo mkdir -p /usr/lib/i386-linux-gnu
+          sudo cp -a "$HOME"/sdl3-i386/lib/libSDL3.so* /usr/lib/i386-linux-gnu/
+          sudo cp -r "$HOME/sdl3-i386/include/SDL3" /usr/include/
+
+      # chasm, at the commit the tests were made against, its ONNX Runtime
+      # from PyPI's onnxruntime (the library ort links to)
+      - name: ONNX Runtime
+        run: |
+          python3 -m pip download --no-deps "onnxruntime==$ONNXRUNTIME_VERSION" -d ort
+          python3 -m zipfile -e ort/onnxruntime-*.whl ort/x
+          mkdir -p "$HOME/ort"
+          cp ort/x/onnxruntime/capi/libonnxruntime.so.* "$HOME/ort/"
+          cd "$HOME/ort" && ln -sf libonnxruntime.so.$ONNXRUNTIME_VERSION libonnxruntime.so \
+            && ln -sf libonnxruntime.so.$ONNXRUNTIME_VERSION libonnxruntime.so.1
+      - name: chasm
+        run: |
+          git clone --filter=blob:none https://github.com/chasmlol/chasm "$HOME/chasm"
+          git -C "$HOME/chasm" checkout --quiet "$(cat tests/CHASM_COMMIT)"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/chasm/target
+          key: chasm-${{ hashFiles('tests/CHASM_COMMIT') }}
+      - name: Build chasm
+        working-directory: /home/runner/chasm
+        env:
+          ORT_LIB_LOCATION: /home/runner/ort
+          ORT_PREFER_DYNAMIC_LINK: "1"
+        run: cargo build -p chasm
+
+      - name: OpenCE with the bridge
+        run: |
+          python3 tools/apply_to_opence.py
+          cd OpenCE
+          python3 configure.py --release --pgo=off --lto=off
+          ninja linux
+          mkdir -p dist/halo-linux-release && cp build/linux/halo dist/halo-linux-release/
+
+      - name: The harness
+        run: tests/client_harness/build.sh "$RUNNER_TEMP/harness"
+
+      - name: End to end
+        env:
+          LD_LIBRARY_PATH: /home/runner/ort:/usr/lib/i386-linux-gnu
+        run: |
+          python3 tests/run_e2e.py --chasm "$HOME/chasm/target/debug/chasm" \
+            --harness "$RUNNER_TEMP/harness" --opence OpenCE
